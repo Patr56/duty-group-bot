@@ -1,7 +1,5 @@
 target
-.classpath
-.project
-.settings
-.vscode
-.metals
-.bloop
+.idea
+.iml
+*.class
+*.log
