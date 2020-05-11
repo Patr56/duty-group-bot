@@ -127,6 +127,7 @@ class Bot[F[_] : Async : Timer : ContextShift](token: String, storage: DutyGroup
         |/unreg - уйти из участников.
         |/list - список участников.
         |/reset - очистить участников.
+        |/help - очистить участников.
         |Управление:
         |/set 2 - выставляет количество дежурных.
         |/add @employer[, @employerN] - добавить участников.
