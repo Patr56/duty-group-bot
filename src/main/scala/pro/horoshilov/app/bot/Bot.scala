@@ -3,16 +3,18 @@ package pro.horoshilov.app.bot
 import java.text.SimpleDateFormat
 import java.util.{Date, TimeZone}
 
+import cats.data.OptionT
 import cats.effect.{Async, ContextShift, IO, Timer}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import com.bot4s.telegram.api.declarative.{Args, Commands, RegexCommands}
 import com.bot4s.telegram.cats.Polling
+import com.bot4s.telegram.methods.SendMessage
 import com.bot4s.telegram.models.Message
 import pro.horoshilov.app.service.DutyGroupStorage
 
 import scala.concurrent.ExecutionContext
-import scala.util.Try
+import scala.util.{Random, Try}
 
 class Bot[F[_] : Async : Timer : ContextShift](token: String, storage: DutyGroupStorage[F]) extends DefaultBot[F](token)
   with Polling[F]
@@ -34,7 +36,7 @@ class Bot[F[_] : Async : Timer : ContextShift](token: String, storage: DutyGroup
         val employers = args.mkString("").split(",").map(_.trim).filterNot(_.isEmpty).sorted.toSet
         for {
           _ <- storage.add(msg.chat.id, employers)
-          _ <- reply(s"Участник${if (employers.size == 1) "" else "и"} ${employers.mkString(", ")} добавлен${if (employers.size == 1) "" else "ы"}.").void
+          _ <- reply(s"Участник${m(employers, "", "и")} ${employers.mkString(", ")} добавлен${m(employers, "", "ы")}.")
         } yield ()
 
       case _ =>
@@ -84,7 +86,7 @@ class Bot[F[_] : Async : Timer : ContextShift](token: String, storage: DutyGroup
       employers <- storage.employers(msg.chat.id)
       _ <- reply(if (employers.isEmpty)
         """Список сотрудников пуст.
-          |Добавьте сперва /add @user""".stripMargin else employers.toList.sorted.mkString("Сотрудники: ", ", ", ".")).void
+          |Добавьте сперва /add @user или /reg""".stripMargin else employers.toList.sorted.mkString("Сотрудники: ", ", ", ".")).void
     } yield ()
   }
 
@@ -93,10 +95,10 @@ class Bot[F[_] : Async : Timer : ContextShift](token: String, storage: DutyGroup
       _ <- reply(
         s"""${date.format(new Date())}
            |Начинаю искать дежурных...""".stripMargin)
-      v <- storage.duty(msg.chat.id)
+      v <- storage.assignDuty(msg.chat.id)
       _ <- reply(if (v.isEmpty)
         """Дежурных нет.
-          | Добавьте сперва /add @user""".stripMargin else v.mkString("Дежурные на сегодня: ", ", ", ".")).void
+          | Добавьте сперва /add @user""".stripMargin else v.mkString(s"Дежурны${m(v, "й", "е")} на сегодня: ", ", ", ".")).void
     } yield ()
   }
 
@@ -111,11 +113,24 @@ class Bot[F[_] : Async : Timer : ContextShift](token: String, storage: DutyGroup
         reply("Ошибка. Попробуйте: /remove @user").void
     }
   }
+
   onCommand("/reset") { implicit msg: Message =>
     for {
       _ <- storage.reset(msg.chat.id)
       _ <- reply("Все дежурные удалены.")
     } yield ()
+  }
+
+  onMessage { implicit msg: Message =>
+    (for {
+      text <- OptionT.fromOption(msg.text) if text.toLowerCase.matches("(.*)(http|pr|пр)(.*)")
+      duty <- OptionT.liftF(storage.duty(msg.chat.id)) if duty.nonEmpty
+      _ <- OptionT.liftF(reply(s"Дорог${m(duty, "ой", "ие")} ${duty.mkString(", ")}, ${getWord(dictionary)} посмотри${m(duty, "", "те")} PR от ${msg.from.fold("")(_.username.fold("")(identity))}"))
+    } yield ()).value.void
+  }
+
+  def m[T](emp: Set[T], one:String, some: String): String = {
+    if (emp.size == 1) one else some
   }
 
   onCommand("/help" | "/start") { implicit msg: Message =>
@@ -134,5 +149,23 @@ class Bot[F[_] : Async : Timer : ContextShift](token: String, storage: DutyGroup
         |/remove @employer - удалить участника.
         |""".stripMargin).void
   }
+
+  def getWord(d: List[String]): String = {
+    Random.shuffle(d).take(1).head
+  }
+
+  val dictionary = List(
+    "пожалуйста,",
+    "будьте добры,",
+    "будьте любезны,",
+    "если вам не трудно,",
+    "если вас не затруднит,",
+    "сделайте одолжение,",
+    "не откажите в любезности,",
+    "не сочтите за труд,",
+    "будь другом,",
+    "по братски,",
+    "вы уж",
+  )
 }
 

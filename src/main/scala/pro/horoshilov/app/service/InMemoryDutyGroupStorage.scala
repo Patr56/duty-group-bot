@@ -53,11 +53,11 @@ class InMemoryDutyGroupStorage[F[_] : Functor](
     })
   }
 
-  /** Получить дежурных. */
-  override def duty(chatId: ChatId): F[Set[Employer]] = {
+  /** Назначить дежурных. */
+  override def assignDuty(chatId: ChatId): F[Set[Employer]] = {
     for {
       count <- getCountDuty(chatId)
-      previous <- history(chatId).map(_.headOption.getOrElse((0, Set.empty))._2)
+      previous <- duty(chatId)
       dutyEmp <- employersRef.get.map(_.getOrElse(chatId, Set.empty).toList.diff(previous.toList)).map(Random.shuffle(_).take(count).toSet)
       _ <- saveDutyToHistory(chatId, dutyEmp)
     } yield dutyEmp
@@ -70,4 +70,11 @@ class InMemoryDutyGroupStorage[F[_] : Functor](
   /** Получить историю назначенных дежурных. */
   override def history(chatId: ChatId): F[List[(Day, Set[Employer])]] =
     employersHistoryRef.get.map(_.getOrElse(chatId, List.empty))
+
+  /** Получить дежурных. */
+  override def duty(chatId: ChatId): F[Set[Employer]] = {
+    for {
+      current <- history(chatId).map(_.headOption.getOrElse((0, Set.empty[Employer]))._2)
+    } yield current
+  }
 }

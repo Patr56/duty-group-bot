@@ -35,4 +35,12 @@ class InMemoryDutyGroupStorageSpec extends AnyFunSuite with Matchers {
 
     t.unsafeRunSync()
   }
+
+  test("regexp") {
+    assertResult(true)("qwer pr eeee".toLowerCase.matches("(.*)(http|pr|пр)(.*)"))
+    assertResult(true)("qwer pr eeee".matches("(.*)(http|pr|пр)(.*)"))
+    assertResult(false)("qwer eeee".matches("(.*)(http|pr|пр)(.*)"))
+    assertResult(true)("qwer http://qw.qw sddd".matches("(.*)(http|pr|пр)(.*)"))
+    assertResult(true)("qwer pr http://qw.qw sddd".matches("(.*)(http|pr|пр)(.*)"))
+  }
 }

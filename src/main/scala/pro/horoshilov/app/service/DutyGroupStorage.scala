@@ -18,6 +18,9 @@ trait DutyGroupStorage[F[_]] {
   /** Сбросить все настройки. */
   def reset(chatId: ChatId): F[Unit]
 
+  /** Назначить дежурных. */
+  def assignDuty(chatId: ChatId): F[Set[Employer]]
+
   /** Получить дежурных. */
   def duty(chatId: ChatId): F[Set[Employer]]
 
