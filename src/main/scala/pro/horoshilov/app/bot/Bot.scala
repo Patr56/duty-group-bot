@@ -1,18 +1,26 @@
 package pro.horoshilov.app.bot
 
+import cats._
+import cats.data._
+import cats.implicits._
 import java.text.SimpleDateFormat
+import java.time.LocalTime
 import java.util.{Date, TimeZone}
 
 import cats.data.OptionT
 import cats.effect.{Async, ContextShift, IO, Timer}
+import cats.effect.Sync
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import com.bot4s.telegram.api.declarative.{Args, Commands, RegexCommands}
 import com.bot4s.telegram.cats.Polling
-import com.bot4s.telegram.methods.SendMessage
-import com.bot4s.telegram.models.Message
+import com.bot4s.telegram.models.{Chat, ChatId, ChatType, Message}
+import cron4s.Cron
 import pro.horoshilov.app.service.DutyGroupStorage
+import fs2.Stream
+import eu.timepit.fs2cron.awakeEveryCron
 
+import scala.collection.immutable
 import scala.concurrent.ExecutionContext
 import scala.util.{Random, Try}
 
@@ -167,5 +175,19 @@ class Bot[F[_] : Async : Timer : ContextShift](token: String, storage: DutyGroup
     "по братски,",
     "вы уж",
   )
+
+  val everyFiveSeconds = Cron.unsafeParse("*/5 * * ? * *")
+
+  val sendMessage: Stream[F, Unit] = Stream.eval(
+    storage.chats().flatMap(chats => chats.map {
+      chatId: ChatId => {
+        implicit val message: Message = Message(messageId = 1, date = 1, chat = Chat(chatId.toEither.left.getOrElse(0), ChatType.Group))
+        reply(s"Сообщение для чата ${chatId}").void
+      }
+    }.foldLeft(unit)((a, b) => b))
+  )
+
+  val scheduled: Stream[Any, Unit] = awakeEveryCron[IO](everyFiveSeconds) >> sendMessage
+  scheduled.repeat.compile.drain
 }
 

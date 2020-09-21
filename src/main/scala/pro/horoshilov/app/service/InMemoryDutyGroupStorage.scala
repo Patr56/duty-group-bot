@@ -77,4 +77,9 @@ class InMemoryDutyGroupStorage[F[_] : Functor](
       current <- history(chatId).map(_.headOption.getOrElse((0, Set.empty[Employer]))._2)
     } yield current
   }
+
+  /** Список чатов. */
+  override def chats(): F[Set[ChatId]] = {
+    dutyRef.get.map(_.keySet)
+  }
 }

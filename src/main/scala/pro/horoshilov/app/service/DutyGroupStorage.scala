@@ -26,4 +26,7 @@ trait DutyGroupStorage[F[_]] {
 
   /** Получить историю назначенных дежурных. */
   def history(chatId: ChatId): F[List[(Day, Set[Employer])]]
+
+  /** Список чатов. */
+  def chats(): F[Set[ChatId]]
 }
