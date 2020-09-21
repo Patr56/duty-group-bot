@@ -1,0 +1,23 @@
+{
+  "name": "duty-group-bot",
+  "version": "1.0.0",
+  "description": "Telegram бот для определения дежурных из списка участников.",
+  "main": "index.js",
+  "scripts": {
+    "run": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Patr56/duty-group-bot.git"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Patr56/duty-group-bot/issues"
+  },
+  "homepage": "https://github.com/Patr56/duty-group-bot#readme",
+  "dependencies": {
+    "telegraf": "^3.38.0"
+  }
+}
