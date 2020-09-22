@@ -18,6 +18,8 @@
   },
   "homepage": "https://github.com/Patr56/duty-group-bot#readme",
   "dependencies": {
+    "aws-sdk": "^2.758.0",
+    "nanoid": "^3.1.12",
     "telegraf": "^3.38.0"
   }
 }
