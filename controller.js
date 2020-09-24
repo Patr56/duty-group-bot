@@ -1,5 +1,5 @@
 const { Telegraf } = require('telegraf');
-const { chatExtractor } = require('./helper');
+const { chatExtractor, prepareError } = require('./helper');
 
 class Controller {
     constructor(service, token) {
@@ -9,13 +9,11 @@ class Controller {
 
     getBot() {
 
-        // this.bot.catch((err, ctx) => {
-        //     ctx.reply(prepareError("Произошла ошибка.", err))
-        // })
-
         this.bot.start((ctx) => {
             chatExtractor(ctx).then(chat => {
-                this.service.init(chat).then(msg => ctx.reply(msg))
+                this.service.init(chat)
+                    .then(msg => ctx.reply(msg))
+                    .catch(({msg, err}) => ctx.replyWithHTML(prepareError(msg, err)))
             })
         });
 
@@ -23,19 +21,25 @@ class Controller {
 
         this.bot.command("reg", (ctx) => {
             chatExtractor(ctx).then(chat => {
-                this.service.reg(chat, ctx.from.username).then(msg => ctx.reply(msg))
+                this.service.reg(chat, ctx.from.username)
+                    .then(msg => ctx.reply(msg))
+                    .catch(({msg, err}) => ctx.replyWithHTML(prepareError(msg, err)))
             })
         });
 
         this.bot.command("unreg", (ctx) => {
             chatExtractor(ctx).then(chat => {
-                this.service.unreg(chat, ctx.from.username).then(msg => ctx.reply(msg))
+                this.service.unreg(chat, ctx.from.username)
+                    .then(msg => ctx.reply(msg))
+                    .catch(({msg, err}) => ctx.replyWithHTML(prepareError(msg, err)))
             })
         });
 
         this.bot.command("list", (ctx) => {
             chatExtractor(ctx).then(chat => {
-                this.service.list(chat, ctx.from.username).then(msg => ctx.reply(msg))
+                this.service.list(chat, ctx.from.username)
+                    .then(msg => ctx.reply(msg))
+                    .catch(({msg, err}) => ctx.replyWithHTML(prepareError(msg, err)))
             })
         });
 
