@@ -17,7 +17,7 @@ class Controller {
             })
         });
 
-        this.bot.help((ctx) => ctx.reply(this.service.help()));
+        this.bot.help((ctx) => ctx.replyWithHTML(this.service.help()));
 
         this.bot.command("reg", (ctx) => {
             chatExtractor(ctx).then(chat => {
