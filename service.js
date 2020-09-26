@@ -29,12 +29,12 @@ class Service {
 
         return this._objectExist(settingsKey).then(hasSettings => {
             return new Promise((resolve, reject) => {
-                const readableName = this.getChatReadableName(chat);
+                const readableName = this._getChatReadableName(chat);
 
                 if (hasSettings) {
                     resolve(`Хранилище для "${readableName}" уже создано.`);
                 } else {
-                    this.s3.upload(params, function (err, data) {
+                    this.s3.upload(params, (err, data) => {
                         if (err) {
                             reject(new ServiceError(`Ошибка при создании хранилища для "${readableName}".`, err));
                         } else {
@@ -66,10 +66,10 @@ class Service {
             }
 
             return new Promise((resolve, reject) => {
-                this.s3.deleteObjects(props, function (err, data) {
+                this.s3.deleteObjects(props, (err, data) => {
                     if (err) {
-                        console.error("clear", `Ошибка при очистке хранилища для "${this.getChatReadableName(chat)}".`, err);
-                        reject(new ServiceError(`Ошибка при очистке хранилища для "${this.getChatReadableName(chat)}".`, err));
+                        console.error("clear", `Ошибка при очистке хранилища для "${this._getChatReadableName(chat)}".`, err);
+                        reject(new ServiceError(`Ошибка при очистке хранилища для "${this._getChatReadableName(chat)}".`, err));
                     } else {
                         resolve();
                     }
@@ -89,7 +89,7 @@ class Service {
         return this._userExist(chat, username).then(userExist => {
             if (userExist === false) {
                 return new Promise((resolve, reject) => {
-                    this.s3.upload(params, function (err, data) {
+                    this.s3.upload(params, (err, data) => {
                         if (err) {
                             reject(new ServiceError(`Ошибка при регистрации пользователя @${username}.`, err));
                         } else {
@@ -114,7 +114,7 @@ class Service {
         return this._userExist(chat, username).then(userExist => {
             if (userExist === true) {
                 return new Promise((resolve, reject) => {
-                    this.s3.deleteObject(params, function (err, data) {
+                    this.s3.deleteObject(params, (err, data) => {
                         if (err) {
                             reject(new ServiceError(`Ошибка при удалении пользователя ${username}.`, err));
                         } else {
@@ -139,9 +139,9 @@ class Service {
         };
 
         return new Promise((resolve, reject) => {
-            this.s3.listObjectsV2(params, function (err, data) {
+            this.s3.listObjectsV2(params, (err, data) => {
                 if (err) {
-                    reject(new ServiceError(`Ошибка при запросе списка дежурных для ${this.getChatReadableName(chat)}.`, err));
+                    reject(new ServiceError(`Ошибка при запросе списка дежурных для ${this._getChatReadableName(chat)}.`, err));
                 } else {
                     const dutyUsers = data.Contents.map(object => {
                         return object.Key.replace(keyPrefix, "");
@@ -176,7 +176,7 @@ class Service {
         };
 
         return new Promise((resolve, reject) => {
-            this.s3.headObject(params, function (err, data) {
+            this.s3.headObject(params, (err, data) => {
                 if (err) {
                     if (err.statusCode === 404) {
                         resolve(false)
@@ -206,7 +206,7 @@ class Service {
         };
 
         return new Promise((resolve, reject) => {
-            this.s3.getObject(params, function (err, data) {
+            this.s3.getObject(params, (err, data) => {
                 if (err) {
                     reject(new ServiceError(`Ошибка при получении настроек для чата ${this.getSettingsKey(chat)}.`, err));
                 } else {
@@ -229,7 +229,7 @@ class Service {
         };
 
         return new Promise((resolve, reject) => {
-            this.s3.upload(params, function (err, data) {
+            this.s3.upload(params, (err, data) => {
                 if (err) {
                     reject(new ServiceError(`Ошибка при обновлении настроек хранилища для ${chat.id}.`, err));
                 } else {
