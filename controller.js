@@ -124,7 +124,7 @@ class Controller {
                     `ID: ${id}`,
                     '',
                     `Сообщение в чат: ${msg}`,
-                    ''
+                    '',
                     `Ошибка: ${err.message}`,
                     '',
                     "Stack:",
