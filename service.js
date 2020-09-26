@@ -27,9 +27,9 @@ class Service {
     }
 
     init(chat) {
-        var params = {
+        const params = {
             Bucket: BUCKET_NAME,
-            Key: this.getSettingsKey(chat),
+            Key: this._getSettingsKey(chat),
             ContentType: "application/json",
             Body: JSON.stringify({
                 "duty": 2,
@@ -49,14 +49,14 @@ class Service {
     }
 
     reg(chat, username) {
-        var params = {
+        const params = {
             Bucket: BUCKET_NAME,
-            Key: this.getFullKey(chat, username),
+            Key: this._getFullKey(chat, username),
             ContentType: "application/json",
             Body: ""
         };
 
-        return this.userExist(chat, username).then(userExist => {
+        return this._userExist(chat, username).then(userExist => {
             if (userExist === false) {
                 return new Promise((resolve, reject) => {
                     this.s3.upload(params, function (err, data) {
@@ -66,7 +66,7 @@ class Service {
                             resolve(`@${username} добавлен в дежурные.`);
                         }
                     });
-                }).then(msg => this.increment(chat).then(settings => {
+                }).then(msg => this._incrementUser(chat).then(settings => {
                     return `${msg}\nКоличество дежурных: ${settings.countPeople}`;
                 }));
             } else {
@@ -76,12 +76,12 @@ class Service {
     }
 
     unreg(chat, username) {
-        var params = {
+        const params = {
             Bucket: BUCKET_NAME,
-            Key: this.getFullKey(chat, username),
+            Key: this._getFullKey(chat, username),
         };
 
-        return this.userExist(chat, username).then(userExist => {
+        return this._userExist(chat, username).then(userExist => {
             if (userExist === true) {
                 return new Promise((resolve, reject) => {
                     this.s3.deleteObject(params, function (err, data) {
@@ -91,7 +91,7 @@ class Service {
                             resolve(`@${username} удалён из дежурные.`);
                         }
                     });
-                }).then(msg => this.decrement(chat).then(settings => {
+                }).then(msg => this._decrementUser(chat).then(settings => {
                     return `${msg}\nКоличество дежурных: ${settings.countPeople}`;
                 }));
             } else {
@@ -105,10 +105,10 @@ class Service {
     }
 
     list(chat) {
-        var params = {
+        const params = {
             Bucket: BUCKET_NAME,
             Delimiter: "/",
-            Prefix: `${this.getChatKey(chat)}/`,
+            Prefix: `${this._getChatKey(chat)}/`,
         };
 
         return new Promise((resolve, reject) => {
@@ -123,26 +123,26 @@ class Service {
         });
     }
 
-    getChatReadableName(chat) {
+    _getChatReadableName(chat) {
         return `${chat.username ? chat.username : chat.title}`
     }
 
-    getChatKey(chat) {
+    _getChatKey(chat) {
         return `${chat.type}/${chat.id}`;
     }
 
-    getFullKey(chat, username) {
-        return `${this.getChatKey(chat)}/@${username}`;
+    _getFullKey(chat, username) {
+        return `${this._getChatKey(chat)}/@${username}`;
     }
 
-    getSettingsKey(chat) {
-        return `${this.getChatKey(chat)}/${SETTINGS_NAME}`;
+    _getSettingsKey(chat) {
+        return `${this._getChatKey(chat)}/${SETTINGS_NAME}`;
     }
 
-    userExist(chat, username) {
-        var params = {
+    _objectExist(key, errMsg) {
+        const params = {
             Bucket: BUCKET_NAME,
-            Key: this.getFullKey(chat, username)
+            Key: key
         };
 
         return new Promise((resolve, reject) => {
@@ -151,7 +151,7 @@ class Service {
                     if (err.statusCode === 404) {
                         resolve(false)
                     } else {
-                        reject({ msg: `Ошибка при проверке наличия пользователя ${this.getFullKey(chat, username)}.`, err });
+                        reject({ msg: errMsg, err });
                     }
                 } else {
                     resolve(true)
@@ -160,10 +160,19 @@ class Service {
         })
     }
 
-    getSettings(chat) {
-        var params = {
+    _userExist(chat, username) {
+        const userKey = this._getFullKey(chat, username)
+
+        return this._objectExist(
+            userKey,
+            `Ошибка при проверке наличия пользователя ${userKey}.`
+        );
+    }
+
+    _getSettings(chat) {
+        const params = {
             Bucket: BUCKET_NAME,
-            Key: this.getSettingsKey(chat)
+            Key: this._getSettingsKey(chat)
         };
 
         return new Promise((resolve, reject) => {
@@ -181,10 +190,10 @@ class Service {
         })
     }
 
-    updateSettings(chat, newSettings) {
-        var params = {
+    _updateSettings(chat, newSettings) {
+        const params = {
             Bucket: BUCKET_NAME,
-            Key: this.getSettingsKey(chat),
+            Key: this._getSettingsKey(chat),
             ContentType: "application/json",
             Body: JSON.stringify(newSettings, null, 2)
         };
@@ -200,18 +209,18 @@ class Service {
         })
     }
 
-    increment(chat) {
-        return this.getSettings(chat).then(settings => {
+    _incrementUser(chat) {
+        return this._getSettings(chat).then(settings => {
             const newSettings = { ...settings, countPeople: settings.countPeople + 1 }
-            return this.updateSettings(chat, newSettings)
+            return this._updateSettings(chat, newSettings)
         })
     }
 
-    decrement(chat) {
-        return this.getSettings(chat).then(settings => {
+    _decrementUser(chat) {
+        return this._getSettings(chat).then(settings => {
             if (settings.countPeople > 0) {
                 const newSettings = { ...settings, countPeople: settings.countPeople - 1 }
-                return this.updateSettings(chat, newSettings)
+                return this._updateSettings(chat, newSettings)
             }
         })
     }
