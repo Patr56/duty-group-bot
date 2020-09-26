@@ -58,12 +58,14 @@ class Service {
                     Objects: [
                         ...dutyUsers.map(dutyUser => {
                             return {
-                                ObjectKey: `${this._getChatKey(chat)}/${dutyUser}`
+                                Key: `${this._getChatKey(chat)}/${dutyUser}`
                             }
                         }),
                         this._getSettingsKey(chat)]
                 }
             }
+
+            console.log("clear", props);
 
             return new Promise((resolve, reject) => {
                 this.s3.deleteObjects(props, (err, data) => {

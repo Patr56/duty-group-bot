@@ -102,7 +102,7 @@ class Controller {
                                 this._replyMessage(ctx, [
                                     'Список дежурных:',
                                     dutyUsers.join(", "),
-                                    `Всего: ${dutyUsers.length}`
+                                    `Всего ${dutyUsers.length} из ${ctx.getChatMembersCount().then(count => count)}`
                                 ].join('\n'))
                             } else {
                                 this._replyMessage(ctx, 'Дежурных нет.');
