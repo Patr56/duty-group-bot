@@ -131,9 +131,11 @@ class Controller {
                     err.stack
                 ]
 
-                console.error(errorMsg.join('\n'));
+                console.error(JSON.stringify(errorMsg));
+
                 ctx.telegram.sendMessage(this.ownerId, errorMsg.join('\n'));
-                ctx.replyWithHTML(`${msg}\n\nid: "${id}"`);
+
+                ctx.replyWithHTML(`<code>${msg}</code>\n\n<b>id:</b> ${id}`);
 
             } else {
                 this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', error));
