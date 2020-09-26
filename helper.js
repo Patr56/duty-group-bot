@@ -1,9 +1,12 @@
 const { nanoid } = require('nanoid');
 
-module.exports.prepareError = (text, error) => {
+module.exports.prepareError = (msg, error) => {
     const id = nanoid();
-    console.error(id, text, error)
-    return `${text}\n\nid: "${id}"`
+
+    console.error("id:", id, "msg:", msg);
+    console.error("id:", id, "error:", error);
+
+    return `${msg}\n\nid: "${id}"`
 }
 
 module.exports.chatExtractor = (ctx) => {

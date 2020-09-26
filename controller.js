@@ -1,4 +1,6 @@
 const { Telegraf } = require('telegraf');
+
+const { ServiceError } = require('./errors')
 const { chatExtractor, prepareError } = require('./helper');
 
 class Controller {
@@ -10,11 +12,17 @@ class Controller {
 
     getBot() {
 
+        this.bot.catch((err, ctx) => {
+            this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', err ));
+        })
+
         this.bot.start((ctx) => {
             chatExtractor(ctx).then(chat => {
                 this.service.init(chat)
-                    .then(msg => ctx.reply(msg))
-                    .catch(({ msg, err }) => ctx.replyWithHTML(prepareError(msg, err)))
+                    .then(
+                        msg => ctx.reply(msg),
+                        this._onError(ctx)
+                    )
             })
         });
 
@@ -42,54 +50,76 @@ class Controller {
         this.bot.command("reset", (ctx) => {
             chatExtractor(ctx).then(chat => {
                 this.service.reset(chat)
-                    .then(msg => ctx.reply('Дежурные удалены, а начтройки чата сброшены.'))
-                    .catch(({ msg, err }) => ctx.replyWithHTML(prepareError(msg, err)))
+                    .then(
+                        msg => ctx.reply('Дежурные удалены, а начтройки чата сброшены.'),
+                        this._onError(ctx)
+                    )
             })
         });
 
         this.bot.command("clear", (ctx) => {
             chatExtractor(ctx).then(chat => {
                 this.service.clear(chat)
-                    .then(msg => ctx.reply('Данные о чате удалены из хранилища.'))
-                    .catch(({ msg, err }) => ctx.replyWithHTML(prepareError(msg, err)))
+                    .then(
+                        msg => ctx.reply('Данные о чате удалены из хранилища.'),
+                        this._onError(ctx)
+                    )
+
             })
         });
 
         this.bot.command("reg", (ctx) => {
             chatExtractor(ctx).then(chat => {
                 this.service.reg(chat, ctx.from.username)
-                    .then(msg => ctx.reply(msg))
-                    .catch(({ msg, err }) => ctx.replyWithHTML(prepareError(msg, err)))
+                    .then(
+                        msg => ctx.reply(msg),
+                        this._onError(ctx)
+                    )
             })
         });
 
         this.bot.command("unreg", (ctx) => {
             chatExtractor(ctx).then(chat => {
                 this.service.unreg(chat, ctx.from.username)
-                    .then(msg => ctx.reply(msg))
-                    .catch(({ msg, err }) => ctx.replyWithHTML(prepareError(msg, err)))
+                    .then(
+                        msg => ctx.reply(msg),
+                        this._onError(ctx)
+                    )
+
             })
         });
 
         this.bot.command("list", (ctx) => {
             chatExtractor(ctx).then(chat => {
                 this.service.list(chat, ctx.from.username)
-                    .then(dutyUsers => {
-                        if (dutyUsers.length > 0) {
-                            ctx.reply([
-                                'Список дежурных:',
-                                dutyUsers.join(", "),
-                                `Всего: ${dutyUsers.length}`
-                            ].join('\n'))
-                        } else {
-                            ctx.reply('Дежурных нет.');
-                        }
-                    })
-                    .catch(({ msg, err }) => ctx.replyWithHTML(prepareError(msg, err)))
+                    .then(
+                        dutyUsers => {
+                            if (dutyUsers.length > 0) {
+                                ctx.reply([
+                                    'Список дежурных:',
+                                    dutyUsers.join(", "),
+                                    `Всего: ${dutyUsers.length}`
+                                ].join('\n'))
+                            } else {
+                                ctx.reply('Дежурных нет.');
+                            }
+                        },
+                        this._onError(ctx)
+                    )
             })
         });
 
         return this.bot;
+    }
+
+    _onError(ctx) {
+        return (error) => {
+            if (error instanceof ServiceError) {
+                ctx.replyWithHTML(prepareError(error.msg, error.err))
+            } else {
+                this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', err ));
+            }
+        }
     }
 }
 
