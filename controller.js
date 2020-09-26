@@ -82,7 +82,7 @@ class Controller {
                                 this._onError(ctx)
                             )
                     } else {
-                        this._onErrorInArg(ctx, '/set 2');
+                        this._onErrorInArg(ctx, '/set 2', 'Значение должно быть больше 0');
                     }
 
                 } else {
@@ -155,7 +155,9 @@ class Controller {
     }
 
     _sendMessageToOwner(ctx, msg) {
-        ctx.telegram.sendMessage(this.ownerId, this._prepareMessage(msg));
+        ctx.telegram.sendMessage(this.ownerId, this._prepareMessage(msg), {
+            parse_mode: 'HTML',
+        });
     }
 
     _replyMessage(ctx, msg) {
@@ -170,8 +172,8 @@ class Controller {
         }
     }
 
-    _onErrorInArg(ctx, example) {
-        this._onError(ctx)(new ServiceError(`Ошибка в аргументах. Ожидается: <code>${example}</code>`, new Error()));
+    _onErrorInArg(ctx, example, msg = "") {
+        this._onError(ctx)(new ServiceError(`Ошибка в аргументах. ${msg}. Ожидается: <code>${example}</code>`, new Error()));
     }
 
     _onError(ctx) {
@@ -182,13 +184,13 @@ class Controller {
                 const { msg, err } = error;
 
                 const errorMsg = [
-                    `ID: ${id}`,
+                    `<b>ID:</b> ${id}`,
                     '',
-                    `Сообщение в чат: ${msg}`,
+                    `<b>Сообщение в чат:</b> ${msg}`,
                     '',
-                    `Ошибка: ${err.message}`,
+                    `<b>Ошибка:</b> ${err.message}`,
                     '',
-                    "Stack:",
+                    "<b>Stack:</b>",
                     err.stack
                 ]
 
