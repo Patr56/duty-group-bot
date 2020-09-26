@@ -1,23 +1,24 @@
 const { Telegraf } = require('telegraf');
+const { nanoid } = require('nanoid');
 
 const { ServiceError } = require('./errors')
-const { chatExtractor, prepareError } = require('./helper');
 
 class Controller {
-    constructor(service, token, functionContext) {
+    constructor(service, token, ownerId, functionContext) {
         this.bot = new Telegraf(token)
         this.service = service;
         this.functionContext = functionContext;
+        this.ownerId = ownerId;
     }
 
     getBot() {
 
         this.bot.catch((err, ctx) => {
-            this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', err ));
+            this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', err));
         })
 
         this.bot.start((ctx) => {
-            chatExtractor(ctx).then(chat => {
+            this._chatExtractor(ctx).then(chat => {
                 this.service.init(chat)
                     .then(
                         msg => ctx.reply(msg),
@@ -48,7 +49,7 @@ class Controller {
         });
 
         this.bot.command("reset", (ctx) => {
-            chatExtractor(ctx).then(chat => {
+            this._chatExtractor(ctx).then(chat => {
                 this.service.reset(chat)
                     .then(
                         msg => ctx.reply('Дежурные удалены, а начтройки чата сброшены.'),
@@ -58,7 +59,7 @@ class Controller {
         });
 
         this.bot.command("clear", (ctx) => {
-            chatExtractor(ctx).then(chat => {
+            this._chatExtractor(ctx).then(chat => {
                 this.service.clear(chat)
                     .then(
                         msg => ctx.reply('Данные о чате удалены из хранилища.'),
@@ -69,7 +70,7 @@ class Controller {
         });
 
         this.bot.command("reg", (ctx) => {
-            chatExtractor(ctx).then(chat => {
+            this._chatExtractor(ctx).then(chat => {
                 this.service.reg(chat, ctx.from.username)
                     .then(
                         msg => ctx.reply(msg),
@@ -79,7 +80,7 @@ class Controller {
         });
 
         this.bot.command("unreg", (ctx) => {
-            chatExtractor(ctx).then(chat => {
+            this._chatExtractor(ctx).then(chat => {
                 this.service.unreg(chat, ctx.from.username)
                     .then(
                         msg => ctx.reply(msg),
@@ -90,7 +91,7 @@ class Controller {
         });
 
         this.bot.command("list", (ctx) => {
-            chatExtractor(ctx).then(chat => {
+            this._chatExtractor(ctx).then(chat => {
                 this.service.list(chat, ctx.from.username)
                     .then(
                         dutyUsers => {
@@ -115,11 +116,39 @@ class Controller {
     _onError(ctx) {
         return (error) => {
             if (error instanceof ServiceError) {
-                ctx.replyWithHTML(prepareError(error.msg, error.err))
+                const id = nanoid();
+
+                const { msg, err } = error;
+
+                const errorMsg = [
+                    `ID: ${id}`,
+                    '',
+                    `Сообщение в чат: ${msg}`,
+                    ''
+                    `Ошибка: ${err.message}`,
+                    '',
+                    "Stack:",
+                    err.stack
+                ]
+
+                console.error(errorMsg.join('\n'));
+                ctx.telegram.sendMessage(this.ownerId, errorMsg.join('\n'));
+                ctx.replyWithHTML(`${msg}\n\nid: "${id}"`);
+
             } else {
-                this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', err ));
+                this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', error));
             }
         }
+    }
+
+    _chatExtractor(ctx) {
+        return new Promise((resolve, reject) => {
+            ctx.getChat().then(chat => {
+                resolve(chat)
+            }).catch(error => {
+                reject(new ServiceError("Ошибка при получении информации о чате.", error));
+            })
+        })
     }
 }
 
