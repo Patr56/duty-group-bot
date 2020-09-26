@@ -1,20 +1,10 @@
 const SETTINGS_NAME = 'settings.json';
 const BUCKET_NAME = 'duty-group-bot-storage';
-const HELP = [
-    "<b>Общие команды:</b>",
-    "/duty - выбрать дежурных.",
-    "/reg - стать участником.",
-    "/unreg - уйти из участников.",
-    "/list - список участников.",
-    "/reset - очистить участников.",
-    "/help - очистить участников.",
-    "",
-    "<b>Управление:</b>",
-    "/set 2 - выставляет количество дежурных.",
-    "/add @employer[, @employerN] - добавить участников.",
-    "/remove @employer - удалить участника.",
-].join("\n");
 
+const INIT_SETTINGS = {
+    "duty": 2,
+    "countPeople": 0
+}
 
 /**
  * Сервис для работы с чат ботом.
@@ -27,24 +17,62 @@ class Service {
     }
 
     init(chat) {
+        const settingsKey = this._getSettingsKey(chat);
         const params = {
             Bucket: BUCKET_NAME,
-            Key: this._getSettingsKey(chat),
+            Key: settingsKey,
             ContentType: "application/json",
-            Body: JSON.stringify({
-                "duty": 2,
-                "countPeople": 0
-            }, null, 2)
+            Body: JSON.stringify(INIT_SETTINGS, null, 2)
         };
 
-        return new Promise((resolve, reject) => {
-            this.s3.upload(params, function (err, data) {
-                if (err) {
-                    reject({ msg: `Ошибка при создании хранилища для "${this.getChatReadableName(chat)}".`, err });
+        return this._objectExist(settingsKey).then(hasSettings => {
+            return new Promise((resolve, reject) => {
+                const readableName = this.getChatReadableName(chat);
+
+                if (hasSettings) {
+                    resolve(`Хранилище для "${readableName}" уже создано.`);
                 } else {
-                    resolve(`Хранилище для "${this.getChatReadableName(chat)}" создано, дежурные могут регистрироваться.`);
+                    this.s3.upload(params, function (err, data) {
+                        if (err) {
+                            reject({ msg: `Ошибка при создании хранилища для "${readableName}".`, err });
+                        } else {
+                            resolve(`Хранилище для "${readableName}" создано, дежурные могут регистрироваться.`);
+                        }
+                    });
                 }
-            });
+            })
+        })
+    }
+
+    reset(chat) {
+        return this.clear(chat).then(() => this.init(chat))
+    }
+
+    clear(chat) {
+        return this.list(chat).then(dutyUsers => {
+            const props = {
+                Bucket: BUCKET_NAME,
+                Delete: {
+                    Objects: [
+                        ...dutyUsers.map(dutyUser => {
+                            return {
+                                ObjectKey: `${this._getChatKey(chat)}/${dutyUser}`
+                            }
+                        }),
+                        this._getSettingsKey(chat)]
+                }
+            }
+
+            return new Promise((resolve, reject) => {
+                this.s3.deleteObjects(props, function (err, data) {
+                    if (err) {
+                        console.error("clear", `Ошибка при очистке хранилища для "${this.getChatReadableName(chat)}".`, err);
+                        reject({ msg: `Ошибка при очистке хранилища для "${this.getChatReadableName(chat)}".`, err });
+                    } else {
+                        resolve();
+                    }
+                })
+            })
         })
     }
 
@@ -100,15 +128,12 @@ class Service {
         })
     }
 
-    help() {
-        return `${HELP}\n\n <i>Версия:</i> <b>${this.functionContext.functionVersion}</b>`;
-    }
-
     list(chat) {
+        const keyPrefix = `${this._getChatKey(chat)}/`;
         const params = {
             Bucket: BUCKET_NAME,
             Delimiter: "/",
-            Prefix: `${this._getChatKey(chat)}/`,
+            Prefix: keyPrefix,
         };
 
         return new Promise((resolve, reject) => {
@@ -116,8 +141,11 @@ class Service {
                 if (err) {
                     reject({ msg: `Ошибка при запросе списка дежурных для ${this.getChatReadableName(chat)}.`, err });
                 } else {
-                    console.log("list data", data)
-                    resolve(`Список:\n${JSON.stringify(data, null, 2)}`);
+                    const dutyUsers = data.Contents.map(object => {
+                        return object.Key.replace(keyPrefix, "");
+                    }).filter(user => user != SETTINGS_NAME)
+
+                    resolve(dutyUsers);
                 }
             });
         });

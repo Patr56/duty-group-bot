@@ -5,8 +5,8 @@ const Controller = require('./controller');
 
 module.exports.handler = async function (event, functionContext) {
     const s3storage = new S3({ endpoint: 'storage.yandexcloud.net' });
-    const service = new Service(s3storage, functionContext);
-    const bot = new Controller(service, process.env.BOT_TOKEN).getBot();
+    const service = new Service(s3storage);
+    const bot = new Controller(service, process.env.BOT_TOKEN, functionContext).getBot();
 
     try {
         const message = JSON.parse(event.body);
