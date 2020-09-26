@@ -17,13 +17,26 @@ class Controller {
     trigger() {
         this.service.getChats().then(chats => {
             if (chats.length > 0) {
-                chats.forEach(chatId => {
-                    this.bot.telegram.sendMessage(chatId, '/duty')
+                chats.forEach(chat => {
+                    this.service.duty(chat)
+                        .then(
+                            duty => {
+                                if (duty.length > 0) {
+                                    this.bot.telegram.sendMessage(chat.id, ['Дежурные на сегодня:', ...duty].join('\n'))
+                                } else {
+                                    this.bot.telegram.sendMessage(chat.id, 'Дежурных нет. Добавьте людей в список.')
+                                }
+                            },
+                            (error) => {
+                                console.log("send trigger", error);
+                                this._sendMessageToOwner('Произошла ошибка, при рассылке тригера. ' + JSON.stringify(error, null, 2));
+                            }
+                        )
                 });
             }
         }, (error) => {
             console.log("trigger", error);
-            this._sendMessageToOwner('Произошла ошибка, при обработке тригера.');
+            this._sendMessageToOwner('Произошла ошибка, при обработке тригера. '+ JSON.stringify(error, null, 2));
         })
     }
 

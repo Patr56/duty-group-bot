@@ -2,8 +2,11 @@ const { ServiceError } = require('./errors')
 
 const PROPERTIES_NAME = 'properties.json';
 const TRIGGER_FOLDER_NAME = 'trigger';
-const TRIGGER_DEFAULT_VALUE = 9;
 const BUCKET_NAME = 'duty-group-bot-storage';
+
+const INIT_TRIGGER = {
+    "time": 9
+}
 
 const INIT_PROPERTIES = {
     "dutyCount": 2,
@@ -63,7 +66,11 @@ class Service {
                     reject(new ServiceError('Ошибка при запросе списка тригеров', err));
                 } else {
                     const chats = data.Contents.map(object => {
-                        return object.Key.replace(keyPrefix, "");
+                        const [type, id] = object.Key.replace(keyPrefix, "").split('@')
+                        return {
+                            id,
+                            type
+                        };
                     })
 
                     resolve(chats);
@@ -77,7 +84,8 @@ class Service {
         const params = {
             Bucket: BUCKET_NAME,
             Key: triggerKey,
-            Body: TRIGGER_DEFAULT_VALUE
+            ContentType: "application/json",
+            Body: JSON.stringify(INIT_TRIGGER, null, 2)
         };
 
         return new Promise((resolve, reject) => {
@@ -266,7 +274,7 @@ class Service {
     }
 
     _getTriggerKey(chat) {
-        return `${TRIGGER_FOLDER_NAME}/${chat.id}`;
+        return `${TRIGGER_FOLDER_NAME}/${chat.type}@${chat.id}`;
     }
 
     _getPropertiesKey(chat) {
