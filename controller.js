@@ -3,6 +3,8 @@ const { nanoid } = require('nanoid');
 
 const { ServiceError } = require('./errors')
 
+const MAX_MESSAGE_SIZE = 4000;
+
 class Controller {
     constructor(service, token, ownerId, functionContext) {
         this.bot = new Telegraf(token)
@@ -21,7 +23,7 @@ class Controller {
             this._chatExtractor(ctx).then(chat => {
                 this.service.init(chat)
                     .then(
-                        msg => ctx.reply(msg),
+                        msg => this._replyMessage(ctx, msg),
                         this._onError(ctx)
                     )
             })
@@ -45,14 +47,15 @@ class Controller {
                 "",
                 `<i>Версия:</i> <b>${this.functionContext.functionVersion}</b>`
             ].join('\n');
-            ctx.replyWithHTML(help)
+
+            this._replyMessage(ctx, help)
         });
 
         this.bot.command("reset", (ctx) => {
             this._chatExtractor(ctx).then(chat => {
                 this.service.reset(chat)
                     .then(
-                        msg => ctx.reply('Дежурные удалены, а начтройки чата сброшены.'),
+                        msg => this._replyMessage(ctx, 'Дежурные удалены, а начтройки чата сброшены.'),
                         this._onError(ctx)
                     )
             })
@@ -62,7 +65,7 @@ class Controller {
             this._chatExtractor(ctx).then(chat => {
                 this.service.clear(chat)
                     .then(
-                        msg => ctx.reply('Данные о чате удалены из хранилища.'),
+                        msg => this._replyMessage(ctx, 'Данные о чате удалены из хранилища.'),
                         this._onError(ctx)
                     )
 
@@ -73,7 +76,7 @@ class Controller {
             this._chatExtractor(ctx).then(chat => {
                 this.service.reg(chat, ctx.from.username)
                     .then(
-                        msg => ctx.reply(msg),
+                        msg => this._replyMessage(ctx, msg),
                         this._onError(ctx)
                     )
             })
@@ -83,7 +86,7 @@ class Controller {
             this._chatExtractor(ctx).then(chat => {
                 this.service.unreg(chat, ctx.from.username)
                     .then(
-                        msg => ctx.reply(msg),
+                        msg => this._replyMessage(ctx, msg),
                         this._onError(ctx)
                     )
 
@@ -96,13 +99,13 @@ class Controller {
                     .then(
                         dutyUsers => {
                             if (dutyUsers.length > 0) {
-                                ctx.reply([
+                                this._replyMessage(ctx, [
                                     'Список дежурных:',
                                     dutyUsers.join(", "),
                                     `Всего: ${dutyUsers.length}`
                                 ].join('\n'))
                             } else {
-                                ctx.reply('Дежурных нет.');
+                                this._replyMessage(ctx, 'Дежурных нет.');
                             }
                         },
                         this._onError(ctx)
@@ -111,6 +114,22 @@ class Controller {
         });
 
         return this.bot;
+    }
+
+    _sendMessageToOwner(ctx, msg) {
+        ctx.telegram.sendMessage(this.ownerId, this._prepareMessage(msg));
+    }
+
+    _replyMessage(ctx, msg) {
+        ctx.replyWithHTML(this._prepareMessage(msg))
+    }
+
+    _prepareMessage(msg) {
+        if (msg.length > MAX_MESSAGE_SIZE) {
+            return msg.slice(0, MAX_MESSAGE_SIZE) + '...'
+        } else {
+            return msg
+        }
     }
 
     _onError(ctx) {
@@ -133,9 +152,8 @@ class Controller {
 
                 console.error(JSON.stringify(errorMsg.filter(el => el != "")));
 
-                ctx.telegram.sendMessage(this.ownerId, errorMsg.join('\n'));
-
-                ctx.replyWithHTML(`${msg}\n\n<b>id:</b> <code>${id}</code>`);
+                this._sendMessageToOwner(ctx, errorMsg.join('\n'));
+                this._replyMessage(ctx, `${msg}\n\n<b>id:</b> <code>${id}</code>`);
 
             } else {
                 this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', error));

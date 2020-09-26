@@ -68,7 +68,6 @@ class Service {
             return new Promise((resolve, reject) => {
                 this.s3.deleteObjects(props, (err, data) => {
                     if (err) {
-                        console.error("clear", `Ошибка при очистке хранилища для "${this._getChatReadableName(chat)}".`, err);
                         reject(new ServiceError(`Ошибка при очистке хранилища для "${this._getChatReadableName(chat)}".`, err));
                     } else {
                         resolve();
