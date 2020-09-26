@@ -36,7 +36,7 @@ class Controller {
             }
         }, (error) => {
             console.log("trigger", error);
-            this._sendMessageToOwner('Произошла ошибка, при обработке тригера. '+ JSON.stringify(error, null, 2));
+            this._sendMessageToOwner('Произошла ошибка, при обработке тригера. ' + JSON.stringify(error, null, 2));
         })
     }
 
@@ -72,8 +72,8 @@ class Controller {
                 "",
                 "<b>Управление:</b>",
                 "/set 2 - выставляет количество дежурных.",
-                "/add @employer[, @employerN] - добавить участников.",
-                "/remove @employer - удалить участника.",
+                "/add @employer[ @employerN] - добавить участников.",
+                "/remove @employer[ @employerN] - удалить участников.",
                 "",
                 "",
                 `<i>Версия:</i> <b>${this.functionContext.functionVersion}</b>`
@@ -122,9 +122,50 @@ class Controller {
             this._chatExtractor(ctx).then(chat => {
                 this.service.reset(chat)
                     .then(
-                        msg => this._replyMessage(ctx, 'Дежурные удалены, а настройки чата сброшены.'),
+                        msg => this._replyMessage(ctx, 'Дежурные и триггеры удалены, а настройки чата сброшены.'),
                         this._onError(ctx)
                     )
+            })
+        });
+
+        this.bot.command("remove", (ctx) => {
+            this._chatExtractor(ctx).then(chat => {
+                if (ctx.state.command && ctx.state.command.splitArgs && ctx.state.command.splitArgs.length > 0) {
+
+                    const deleteDutyPeople = ctx.state.command.splitArgs;
+
+                    Promise.all(deleteDutyPeople.map(dutyUser => {
+                        return this.service.unreg(chat, dutyUser[0] === '@' ? dutyUser.substring(1) : dutyUser)
+                    })).then(
+                        () => this._replyMessage(ctx, 'Дежурные удалены.'),
+                        this._onError(ctx)
+                    )
+
+                } else {
+                    this._onErrorInArg(ctx, '/remove @employer[ @employerN]');
+                }
+
+            })
+        });
+
+        this.bot.command("add", (ctx) => {
+            this._chatExtractor(ctx).then(chat => {
+                if (ctx.state.command && ctx.state.command.splitArgs && ctx.state.command.splitArgs.length > 0) {
+
+                    const newDutyPeople = ctx.state.command.splitArgs;
+
+                    Promise.all(newDutyPeople.map(dutyUser => {
+                        return this.service.reg(chat, dutyUser[0] === '@' ? dutyUser.substring(1) : dutyUser)
+                    })).then(
+                        () => this._replyMessage(ctx, 'Дежурные добавлены.'),
+                        this._onError(ctx)
+                    )
+
+
+                } else {
+                    this._onErrorInArg(ctx, '/add @employer[, @employerN]');
+                }
+
             })
         });
 
@@ -184,7 +225,6 @@ class Controller {
                         msg => this._replyMessage(ctx, msg),
                         this._onError(ctx)
                     )
-
             })
         });
 
