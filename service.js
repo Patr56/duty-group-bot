@@ -56,16 +56,15 @@ class Service {
                 Bucket: BUCKET_NAME,
                 Delete: {
                     Objects: [
-                        ...dutyUsers.map(dutyUser => {
-                            return {
-                                Key: `${this._getChatKey(chat)}/${dutyUser}`
-                            }
-                        }),
-                        this._getSettingsKey(chat)]
+                        ...dutyUsers,
+                        SETTINGS_NAME
+                    ].map(objKey => {
+                        return {
+                            Key: `${this._getChatKey(chat)}/${objKey}`
+                        }
+                    })
                 }
             }
-
-            console.log("clear", JSON.stringify(props));
 
             return new Promise((resolve, reject) => {
                 this.s3.deleteObjects(props, (err, data) => {
