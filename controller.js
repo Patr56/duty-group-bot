@@ -1,4 +1,5 @@
 const { Telegraf } = require('telegraf');
+const commandParts = require('telegraf-command-parts');
 const { nanoid } = require('nanoid');
 
 const { ServiceError } = require('./errors')
@@ -14,6 +15,8 @@ class Controller {
     }
 
     getBot() {
+
+        this.bot.use(commandParts());
 
         this.bot.catch((err, ctx) => {
             this._onError(ctx)(new ServiceError('В сервисе произошла ошибка.', err));
@@ -55,9 +58,37 @@ class Controller {
             this._chatExtractor(ctx).then(chat => {
                 this.service.reset(chat)
                     .then(
-                        msg => this._replyMessage(ctx, 'Дежурные удалены, а начтройки чата сброшены.'),
+                        msg => this._replyMessage(ctx, 'Дежурные удалены, а настройки чата сброшены.'),
                         this._onError(ctx)
                     )
+            })
+        });
+
+        this.bot.command("set", (ctx) => {
+            this._chatExtractor(ctx).then(chat => {
+                if (ctx.state.command && ctx.state.command.splitArgs && ctx.state.command.splitArgs.length > 0) {
+
+                    var dutyCount = 0;
+                    try {
+                        dutyCount = parseInt(ctx.state.command.splitArgs[0], 10);
+                    } catch (err) {
+
+                    }
+
+                    if (dutyCount > 0) {
+                        this.service.setDutyCount(chat, dutyCount)
+                            .then(
+                                newDutycount => this._replyMessage(ctx, `Количество дежурных на день: ${newDutycount}.`),
+                                this._onError(ctx)
+                            )
+                    } else {
+                        this._onErrorInArg(ctx, '/set 2');
+                    }
+
+                } else {
+                    this._onErrorInArg(ctx, '/set 2');
+                }
+
             })
         });
 
@@ -137,6 +168,10 @@ class Controller {
         } else {
             return msg
         }
+    }
+
+    _onErrorInArg(ctx, example) {
+        this._onError(ctx)(new ServiceError(`Ошибка в аргументах. Ожидается: <code>${example}</code>`, new Error()));
     }
 
     _onError(ctx) {

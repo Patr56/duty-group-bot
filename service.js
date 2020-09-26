@@ -4,7 +4,7 @@ const SETTINGS_NAME = 'settings.json';
 const BUCKET_NAME = 'duty-group-bot-storage';
 
 const INIT_SETTINGS = {
-    "duty": 2,
+    "dutyCount": 2,
     "countPeople": 0
 }
 
@@ -76,6 +76,13 @@ class Service {
                 })
             })
         })
+    }
+
+    setDutyCount(chat, dutyCount) {
+        return this._getSettings(chat).then(settings => {
+            const newSettings = { ...settings, dutyCount }
+            return this._updateSettings(chat, newSettings)
+        }).then(newSettings => newSettings.dutyCount)
     }
 
     reg(chat, username) {
