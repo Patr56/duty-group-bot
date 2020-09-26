@@ -192,6 +192,15 @@ class Controller {
         this._onError(ctx)(new ServiceError(`Ошибка в аргументах. ${msg}. Ожидается: <code>${example}</code>`, new Error()));
     }
 
+    _escapeHtml(unsafe) {
+        return unsafe
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
     _onError(ctx) {
         return (error) => {
             if (error instanceof ServiceError) {
@@ -207,7 +216,7 @@ class Controller {
                     `<b>Ошибка:</b> ${err.message}`,
                     '',
                     "<b>Stack:</b>",
-                    err.stack
+                    this._escapeHtml(err.stack)
                 ]
 
                 console.error(JSON.stringify(errorMsg.filter(el => el != "")));
