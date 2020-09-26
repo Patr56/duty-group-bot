@@ -99,11 +99,18 @@ class Controller {
                     .then(
                         dutyUsers => {
                             if (dutyUsers.length > 0) {
-                                this._replyMessage(ctx, [
+                                const msg = [
                                     'Список дежурных:',
                                     dutyUsers.join(", "),
-                                    `Всего ${dutyUsers.length} из ${ctx.getChatMembersCount().then(count => count)}`
-                                ].join('\n'))
+                                    `Всего ${dutyUsers.length}`
+                                ].join('\n')
+
+                                ctx.getChatMembersCount().then(memberCount => {
+                                    this._replyMessage(ctx, `${msg} из ${memberCount}`);
+                                }).catch(() => {
+                                    this._replyMessage(ctx, msg);
+                                })
+
                             } else {
                                 this._replyMessage(ctx, 'Дежурных нет.');
                             }

@@ -65,7 +65,7 @@ class Service {
                 }
             }
 
-            console.log("clear", props);
+            console.log("clear", JSON.stringify(props));
 
             return new Promise((resolve, reject) => {
                 this.s3.deleteObjects(props, (err, data) => {
