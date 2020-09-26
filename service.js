@@ -141,11 +141,10 @@ class Service {
     duty(chat) {
         return this.list(chat).then((dutyUsers) => {
             return this._getProperties(chat).then((properties) => {
-
-                const lastDuty = [... new Set([
-                    ...dutyUsers,
-                    ...properties.lastDuty
-                ])].sort(() => Math.random() - 0.5).slice(0, properties.dutyCount);
+                const lastDuty = dutyUsers
+                    .filter((duty) => !properties.lastDuty.includes(duty))
+                    .sort(() => Math.random() - 0.5)
+                    .slice(0, properties.dutyCount);
 
                 return this._updateProperties(chat, { ...properties, lastDuty }).then(({ lastDuty }) => lastDuty)
             })
