@@ -141,12 +141,16 @@ class Service {
     duty(chat) {
         return this.list(chat).then((dutyUsers) => {
             return this._getProperties(chat).then((properties) => {
-                const lastDuty = dutyUsers
-                    .filter((duty) => !properties.lastDuty.includes(duty))
-                    .sort(() => Math.random() - 0.5)
-                    .slice(0, properties.dutyCount);
+                if (this._compareList(dutyUsers, properties.lastDuty)) {
+                    return dutyUsers;
+                } else {
+                    const lastDuty = dutyUsers
+                        .filter((duty) => !properties.lastDuty.includes(duty))
+                        .sort(() => Math.random() - 0.5)
+                        .slice(0, properties.dutyCount);
 
-                return this._updateProperties(chat, { ...properties, lastDuty }).then(({ lastDuty }) => lastDuty)
+                    return this._updateProperties(chat, { ...properties, lastDuty }).then(({ lastDuty }) => lastDuty);
+                }
             })
         })
     }
@@ -171,6 +175,13 @@ class Service {
                     resolve(dutyUsers);
                 }
             });
+        });
+    }
+
+    _compareList(a, b) {
+        const aSorted = a.slice().sort();
+        return a.length === b.length && b.slice().sort().every(function (value, index) {
+            return value === aSorted[index];
         });
     }
 
