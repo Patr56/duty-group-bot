@@ -54,6 +54,22 @@ class Controller {
             this._replyMessage(ctx, help)
         });
 
+        this.bot.command("duty", (ctx) => {
+            this._chatExtractor(ctx).then(chat => {
+                this.service.duty(chat)
+                    .then(
+                        duty => {
+                            if (duty.length > 0) {
+                                this._replyMessage(ctx, ['Дежурные на сегодня:', ...duty].join('\n'))
+                            } else {
+                                this._replyMessage(ctx, 'Дежурных нет. Добавьте людей в список.')
+                            }
+                        },
+                        this._onError(ctx)
+                    )
+            })
+        });
+
         this.bot.command("reset", (ctx) => {
             this._chatExtractor(ctx).then(chat => {
                 this.service.reset(chat)

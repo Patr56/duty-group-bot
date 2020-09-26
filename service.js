@@ -1,11 +1,12 @@
 const { ServiceError } = require('./errors')
 
-const SETTINGS_NAME = 'settings.json';
+const PROPERTIES_NAME = 'properties.json';
 const BUCKET_NAME = 'duty-group-bot-storage';
 
-const INIT_SETTINGS = {
+const INIT_PROPERTIES = {
     "dutyCount": 2,
-    "countPeople": 0
+    "countPeople": 0,
+    "lastDuty": []
 }
 
 /**
@@ -19,19 +20,19 @@ class Service {
     }
 
     init(chat) {
-        const settingsKey = this._getSettingsKey(chat);
+        const propertiesKey = this._getPropertiesKey(chat);
         const params = {
             Bucket: BUCKET_NAME,
-            Key: settingsKey,
+            Key: propertiesKey,
             ContentType: "application/json",
-            Body: JSON.stringify(INIT_SETTINGS, null, 2)
+            Body: JSON.stringify(INIT_PROPERTIES, null, 2)
         };
 
-        return this._objectExist(settingsKey).then(hasSettings => {
+        return this._objectExist(propertiesKey).then(hasProperties => {
             return new Promise((resolve, reject) => {
                 const readableName = this._getChatReadableName(chat);
 
-                if (hasSettings) {
+                if (hasProperties) {
                     resolve(`Хранилище для "${readableName}" уже создано.`);
                 } else {
                     this.s3.upload(params, (err, data) => {
@@ -57,7 +58,7 @@ class Service {
                 Delete: {
                     Objects: [
                         ...dutyUsers,
-                        SETTINGS_NAME
+                        PROPERTIES_NAME
                     ].map(objKey => {
                         return {
                             Key: `${this._getChatKey(chat)}/${objKey}`
@@ -79,10 +80,10 @@ class Service {
     }
 
     setDutyCount(chat, dutyCount) {
-        return this._getSettings(chat).then(settings => {
-            const newSettings = { ...settings, dutyCount }
-            return this._updateSettings(chat, newSettings)
-        }).then(newSettings => newSettings.dutyCount)
+        return this._getProperties(chat).then(properties => {
+            const newProperties = { ...properties, dutyCount }
+            return this._updateProperties(chat, newProperties)
+        }).then(newProperties => newProperties.dutyCount)
     }
 
     reg(chat, username) {
@@ -103,8 +104,8 @@ class Service {
                             resolve(`@${username} добавлен в дежурные.`);
                         }
                     });
-                }).then(msg => this._incrementUser(chat).then(settings => {
-                    return `${msg}\nКоличество дежурных: ${settings.countPeople}`;
+                }).then(msg => this._incrementUser(chat).then(properties => {
+                    return `${msg}\nКоличество дежурных: ${properties.countPeople}`;
                 }));
             } else {
                 return `Пользователь @${username} уже добавлен.`
@@ -128,13 +129,17 @@ class Service {
                             resolve(`@${username} удалён из дежурные.`);
                         }
                     });
-                }).then(msg => this._decrementUser(chat).then(settings => {
-                    return `${msg}\nКоличество дежурных: ${settings.countPeople}`;
+                }).then(msg => this._decrementUser(chat).then(properties => {
+                    return `${msg}\nКоличество дежурных: ${properties.countPeople}`;
                 }));
             } else {
                 return `Пользователь @${username} уже удалён.`
             }
         })
+    }
+
+    duty(chat) {
+
     }
 
     list(chat) {
@@ -152,7 +157,7 @@ class Service {
                 } else {
                     const dutyUsers = data.Contents.map(object => {
                         return object.Key.replace(keyPrefix, "");
-                    }).filter(user => user != SETTINGS_NAME)
+                    }).filter(user => user != PROPERTIES_NAME)
 
                     resolve(dutyUsers);
                 }
@@ -172,8 +177,8 @@ class Service {
         return `${this._getChatKey(chat)}/@${username}`;
     }
 
-    _getSettingsKey(chat) {
-        return `${this._getChatKey(chat)}/${SETTINGS_NAME}`;
+    _getPropertiesKey(chat) {
+        return `${this._getChatKey(chat)}/${PROPERTIES_NAME}`;
     }
 
     _objectExist(key, errMsg) {
@@ -206,16 +211,16 @@ class Service {
         );
     }
 
-    _getSettings(chat) {
+    _getProperties(chat) {
         const params = {
             Bucket: BUCKET_NAME,
-            Key: this._getSettingsKey(chat)
+            Key: this._getPropertiesKey(chat)
         };
 
         return new Promise((resolve, reject) => {
             this.s3.getObject(params, (err, data) => {
                 if (err) {
-                    reject(new ServiceError(`Ошибка при получении настроек для чата ${this.getSettingsKey(chat)}.`, err));
+                    reject(new ServiceError(`Ошибка при получении настроек для чата ${this._getPropertiesKey(chat)}.`, err));
                 } else {
                     try {
                         resolve(JSON.parse(data.Body));
@@ -227,12 +232,12 @@ class Service {
         })
     }
 
-    _updateSettings(chat, newSettings) {
+    _updateProperties(chat, newProperties) {
         const params = {
             Bucket: BUCKET_NAME,
-            Key: this._getSettingsKey(chat),
+            Key: this._getPropertiesKey(chat),
             ContentType: "application/json",
-            Body: JSON.stringify(newSettings, null, 2)
+            Body: JSON.stringify(newProperties, null, 2)
         };
 
         return new Promise((resolve, reject) => {
@@ -240,24 +245,24 @@ class Service {
                 if (err) {
                     reject(new ServiceError(`Ошибка при обновлении настроек хранилища для ${chat.id}.`, err));
                 } else {
-                    resolve(newSettings);
+                    resolve(newProperties);
                 }
             });
         })
     }
 
     _incrementUser(chat) {
-        return this._getSettings(chat).then(settings => {
-            const newSettings = { ...settings, countPeople: settings.countPeople + 1 }
-            return this._updateSettings(chat, newSettings)
+        return this._getProperties(chat).then(properties => {
+            const newProperties = { ...properties, countPeople: properties.countPeople + 1 }
+            return this._updateProperties(chat, newProperties)
         })
     }
 
     _decrementUser(chat) {
-        return this._getSettings(chat).then(settings => {
-            if (settings.countPeople > 0) {
-                const newSettings = { ...settings, countPeople: settings.countPeople - 1 }
-                return this._updateSettings(chat, newSettings)
+        return this._getProperties(chat).then(properties => {
+            if (properties.countPeople > 0) {
+                const newProperties = { ...properties, countPeople: properties.countPeople - 1 }
+                return this._updateProperties(chat, newProperties)
             }
         })
     }
