@@ -5,4 +5,4 @@ class ServiceError {
     }
 }
 
-module.exports.ServiceError;
+module.exports.ServiceError = ServiceError;
