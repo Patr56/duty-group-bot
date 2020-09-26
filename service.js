@@ -1,6 +1,8 @@
 const { ServiceError } = require('./errors')
 
 const PROPERTIES_NAME = 'properties.json';
+const TRIGGER_FOLDER_NAME = 'trigger';
+const TRIGGER_DEFAULT_VALUE = 9;
 const BUCKET_NAME = 'duty-group-bot-storage';
 
 const INIT_PROPERTIES = {
@@ -47,6 +49,70 @@ class Service {
         })
     }
 
+    getChats() {
+        const keyPrefix = `${TRIGGER_FOLDER_NAME}/`;
+        const params = {
+            Bucket: BUCKET_NAME,
+            Delimiter: "/",
+            Prefix: keyPrefix,
+        };
+
+        return new Promise((resolve, reject) => {
+            this.s3.listObjectsV2(params, (err, data) => {
+                if (err) {
+                    reject(new ServiceError('Ошибка при запросе списка тригеров', err));
+                } else {
+                    const chats = data.Contents.map(object => {
+                        return object.Key.replace(keyPrefix, "");
+                    })
+
+                    resolve(chats);
+                }
+            });
+        });
+    }
+
+    triggerOn(chat) {
+        const triggerKey = this._getTriggerKey(chat);
+        const params = {
+            Bucket: BUCKET_NAME,
+            Key: triggerKey,
+            Body: TRIGGER_DEFAULT_VALUE
+        };
+
+        return new Promise((resolve, reject) => {
+            const readableName = this._getChatReadableName(chat);
+
+            this.s3.upload(params, (err, data) => {
+                if (err) {
+                    reject(new ServiceError(`Ошибка при создании триггера для "${readableName}".`, err));
+                } else {
+                    resolve(`Триггер для "${readableName}" создан.`);
+                }
+            });
+        })
+    }
+
+    triggerOff(chat) {
+        const triggerKey = this._getTriggerKey(chat);
+        const params = {
+            Bucket: BUCKET_NAME,
+            Key: triggerKey
+        };
+
+        return new Promise((resolve, reject) => {
+            const readableName = this._getChatReadableName(chat);
+
+            this.s3.deleteObject(params, (err, data) => {
+                if (err) {
+                    reject(new ServiceError(`Ошибка при удалении триггера для "${readableName}".`, err));
+                } else {
+                    resolve(`Триггер для "${readableName}" удалён.`);
+                }
+            });
+        })
+    }
+
     reset(chat) {
         return this.clear(chat).then(() => this.init(chat))
     }
@@ -76,6 +142,8 @@ class Service {
                     }
                 })
             })
+        }).then(() => {
+            return this.triggerOff(chat);
         })
     }
 
@@ -195,6 +263,10 @@ class Service {
 
     _getFullKey(chat, username) {
         return `${this._getChatKey(chat)}/@${username}`;
+    }
+
+    _getTriggerKey(chat) {
+        return `${TRIGGER_FOLDER_NAME}/${chat.id}`;
     }
 
     _getPropertiesKey(chat) {

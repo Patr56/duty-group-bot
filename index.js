@@ -6,13 +6,17 @@ const Controller = require('./controller');
 module.exports.handler = async function (event, functionContext) {
     const s3storage = new S3({ endpoint: 'storage.yandexcloud.net' });
     const service = new Service(s3storage);
-    const bot = new Controller(service, process.env.BOT_TOKEN, process.env.OWNER_ID, functionContext).getBot();
+    const controller = new Controller(service, process.env.BOT_TOKEN, process.env.OWNER_ID, functionContext);
 
-    try {
-        const message = JSON.parse(event.body);
-        await bot.handleUpdate(message)
-    } catch (error) {
-        console.error(error.message);
+    if (event.messages) {
+        controller.trigger();
+    } else {
+        try {
+            const message = JSON.parse(event.body);
+            await controller.getBot().handleUpdate(message)
+        } catch (error) {
+            console.error(error.message);
+        }
     }
 
     return {

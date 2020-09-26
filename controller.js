@@ -14,6 +14,19 @@ class Controller {
         this.ownerId = ownerId;
     }
 
+    trigger() {
+        this.service.getChats().then(chats => {
+            if (chats.length > 0) {
+                chats.forEach(chatId => {
+                    this.bot.telegram.sendMessage(chatId, '/duty')
+                });
+            }
+        }, (error) => {
+            console.log("trigger", error);
+            this._sendMessageToOwner('Произошла ошибка, при обработке тригера.');
+        })
+    }
+
     getBot() {
 
         this.bot.use(commandParts());
@@ -36,6 +49,8 @@ class Controller {
             const help = [
                 "<b>Общие команды:</b>",
                 "/duty - выбрать дежурных.",
+                "/triggerOn - включить автоматическое назначение дежурных (будни в 09 МСК).",
+                "/triggerOff - отключить автоматическое назначение дежурных.",
                 "/reg - стать участником.",
                 "/unreg - уйти из участников.",
                 "/list - список участников.",
@@ -52,6 +67,26 @@ class Controller {
             ].join('\n');
 
             this._replyMessage(ctx, help)
+        });
+
+        this.bot.command("triggerOn", (ctx) => {
+            this._chatExtractor(ctx).then(chat => {
+                this.service.triggerOn(chat)
+                    .then(
+                        () => this._replyMessage(ctx, "Включено"),
+                        this._onError(ctx)
+                    )
+            })
+        });
+
+        this.bot.command("triggerOff", (ctx) => {
+            this._chatExtractor(ctx).then(chat => {
+                this.service.triggerOff(chat)
+                    .then(
+                        () => this._replyMessage(ctx, "Отключено"),
+                        this._onError(ctx)
+                    )
+            })
         });
 
         this.bot.command("duty", (ctx) => {
@@ -170,8 +205,8 @@ class Controller {
         return this.bot;
     }
 
-    _sendMessageToOwner(ctx, msg) {
-        ctx.telegram.sendMessage(this.ownerId, this._prepareMessage(msg), {
+    _sendMessageToOwner(msg) {
+        this.bot.telegram.sendMessage(this.ownerId, this._prepareMessage(msg), {
             parse_mode: 'HTML',
         });
     }
@@ -221,7 +256,7 @@ class Controller {
 
                 console.error(JSON.stringify(errorMsg.filter(el => el != "")));
 
-                this._sendMessageToOwner(ctx, errorMsg.join('\n'));
+                this._sendMessageToOwner(errorMsg.join('\n'));
                 this._replyMessage(ctx, `${msg}\n\n<b>id:</b> <code>${id}</code>`);
 
             } else {
