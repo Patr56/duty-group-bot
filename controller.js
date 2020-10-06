@@ -5,6 +5,7 @@ const { nanoid } = require('nanoid');
 const { ServiceError } = require('./errors')
 
 const MAX_MESSAGE_SIZE = 4000;
+const SELF_BOT = 1;
 
 class Controller {
     constructor(service, token, ownerId, functionContext) {
@@ -12,6 +13,10 @@ class Controller {
         this.service = service;
         this.functionContext = functionContext;
         this.ownerId = ownerId;
+    }
+
+    pt(items, plural, single) {
+        return items && items.length > 1 ? plural : single;
     }
 
     trigger() {
@@ -22,7 +27,7 @@ class Controller {
                         .then(
                             duty => {
                                 if (duty.length > 0) {
-                                    this.bot.telegram.sendMessage(chat.id, ['Дежурные на сегодня:', ...duty].join('\n'))
+                                    this.bot.telegram.sendMessage(chat.id, [`Дежурны${this.pt(duty, 'е', 'й')} на сегодня: `, ...duty].join(this.pt(duty, '\n', '')))
                                 } else {
                                     this.bot.telegram.sendMessage(chat.id, 'Дежурных нет. Добавьте людей в список.')
                                 }
@@ -86,7 +91,7 @@ class Controller {
             this._chatExtractor(ctx).then(chat => {
                 this.service.triggerOn(chat)
                     .then(
-                        () => this._replyMessage(ctx, "Включено"),
+                        () => this._replyMessage(ctx, "Автоназначение включено"),
                         this._onError(ctx)
                     )
             })
@@ -96,7 +101,7 @@ class Controller {
             this._chatExtractor(ctx).then(chat => {
                 this.service.triggerOff(chat)
                     .then(
-                        () => this._replyMessage(ctx, "Отключено"),
+                        () => this._replyMessage(ctx, "Автоназначение отключено"),
                         this._onError(ctx)
                     )
             })
@@ -108,7 +113,7 @@ class Controller {
                     .then(
                         duty => {
                             if (duty.length > 0) {
-                                this._replyMessage(ctx, ['Дежурные на сегодня:', ...duty].join('\n'))
+                                this._replyMessage(ctx, [`Дежурны${this.pt(duty, 'е', 'й')} на сегодня: `, ...duty].join(this.pt(duty, '\n', '')))
                             } else {
                                 this._replyMessage(ctx, 'Дежурных нет. Добавьте людей в список.')
                             }
@@ -137,7 +142,7 @@ class Controller {
                     Promise.all(deleteDutyPeople.map(dutyUser => {
                         return this.service.unreg(chat, dutyUser[0] === '@' ? dutyUser.substring(1) : dutyUser)
                     })).then(
-                        () => this._replyMessage(ctx, 'Дежурные удалены.'),
+                        () => this._replyMessage(ctx, `Дежурны${this.pt(deleteDutyPeople, 'е', 'й')} удал${this.pt(deleteDutyPeople, 'е', 'ё')}н${this.pt(deleteDutyPeople, 'ы', '')}.`),
                         this._onError(ctx)
                     )
 
@@ -157,7 +162,7 @@ class Controller {
                     Promise.all(newDutyPeople.map(dutyUser => {
                         return this.service.reg(chat, dutyUser[0] === '@' ? dutyUser.substring(1) : dutyUser)
                     })).then(
-                        () => this._replyMessage(ctx, 'Дежурные добавлены.'),
+                        () => this._replyMessage(ctx, `Дежурны${this.pt(newDutyPeople, 'е', 'й')} добавлен${this.pt(newDutyPeople, 'ы', '')}.`),
                         this._onError(ctx)
                     )
 
@@ -241,7 +246,7 @@ class Controller {
                                 ].join('\n')
 
                                 ctx.getChatMembersCount().then(memberCount => {
-                                    this._replyMessage(ctx, `${msg} из ${memberCount}`);
+                                    this._replyMessage(ctx, `${msg} из ${memberCount - SELF_BOT}`);
                                 }).catch(() => {
                                     this._replyMessage(ctx, msg);
                                 })
