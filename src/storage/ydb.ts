@@ -2,10 +2,10 @@ import { TypedValues, Types } from 'ydb-sdk';
 import type { Ydb } from 'ydb-sdk-proto';
 import type { Driver, Session } from 'ydb-sdk';
 
-import type { DomainChat, Properties } from '../types';
+import type { DomainChat, Member, Properties } from '../types';
 import type { ChatState, Storage } from './types';
 
-const SCHEMA_V = 1;
+const SCHEMA_V = 2;
 const DEFAULT_DUTY_COUNT = 1;
 
 const TX_RW = {
@@ -16,7 +16,6 @@ const TX_RW = {
 export const TABLES = {
     chatProps: 'chat_props',
     chatMembers: 'chat_members',
-    roundServed: 'round_served',
     triggers: 'triggers',
 } as const;
 
@@ -34,14 +33,10 @@ function readUint64(value: Ydb.IValue | null | undefined): number {
     return typeof v === 'number' ? v : Number(v.toString());
 }
 
-function rowsAsStrings(rs: Ydb.IResultSet | undefined | null): string[] {
-    return (rs?.rows ?? []).map((row) => readText(row.items?.[0]));
-}
-
 /**
- * Parses a chat_id stored as Utf8 back into number when it round-trips cleanly.
- * Telegram chat ids are typically negative integers; we keep a string fallback
- * for non-numeric ids the bot has historically tolerated.
+ * Parses a chat_id stored as Utf8 back into a number when it round-trips
+ * cleanly. Telegram chat ids are typically negative integers; non-numeric
+ * fallbacks (historic) stay as strings.
  */
 function parseChatId(raw: string): number | string {
     if (raw === '') return raw;
@@ -63,8 +58,9 @@ export class YdbStorage implements Storage {
                 `
                 DECLARE $chat_pk AS Utf8;
                 SELECT duty_count FROM ${TABLES.chatProps} WHERE chat_pk = $chat_pk;
-                SELECT username FROM ${TABLES.chatMembers} WHERE chat_pk = $chat_pk;
-                SELECT username FROM ${TABLES.roundServed} WHERE chat_pk = $chat_pk;
+                SELECT username, COALESCE(served_count, 0u) AS served_count
+                    FROM ${TABLES.chatMembers}
+                    WHERE chat_pk = $chat_pk;
                 `,
                 { $chat_pk: TypedValues.utf8(pk) },
                 TX_RW,
@@ -74,36 +70,51 @@ export class YdbStorage implements Storage {
         const sets = result.resultSets ?? [];
         const propsRow = sets[0]?.rows?.[0];
         const dutyCount = propsRow ? readUint64(propsRow.items?.[0]) || DEFAULT_DUTY_COUNT : DEFAULT_DUTY_COUNT;
-        const members = rowsAsStrings(sets[1]);
-        const roundServed = rowsAsStrings(sets[2]);
+        const members: Member[] = (sets[1]?.rows ?? []).map((row) => ({
+            username: readText(row.items?.[0]),
+            servedCount: readUint64(row.items?.[1]),
+        }));
 
         return {
-            props: { dutyCount, roundServed },
+            props: { dutyCount },
             members,
         };
     }
 
-    async setChatState(chat: DomainChat, props: Properties): Promise<void> {
+    async setProperties(chat: DomainChat, props: Properties): Promise<void> {
         const pk = chatPk(chat);
         await this._do((session) =>
             session.executeQuery(
                 `
                 DECLARE $chat_pk AS Utf8;
                 DECLARE $duty_count AS Uint64;
-                DECLARE $served AS List<Struct<username:Utf8>>;
                 UPSERT INTO ${TABLES.chatProps} (chat_pk, duty_count, schema_v)
                     VALUES ($chat_pk, $duty_count, ${SCHEMA_V}u);
-                DELETE FROM ${TABLES.roundServed} WHERE chat_pk = $chat_pk;
-                UPSERT INTO ${TABLES.roundServed} (chat_pk, username)
-                    SELECT $chat_pk AS chat_pk, username FROM AS_TABLE($served);
                 `,
                 {
                     $chat_pk: TypedValues.utf8(pk),
                     $duty_count: TypedValues.uint64(props.dutyCount),
-                    $served: TypedValues.list(
-                        Types.struct({ username: Types.UTF8 }),
-                        props.roundServed.map((u) => ({ username: u })),
-                    ),
+                },
+                TX_RW,
+            ),
+        );
+    }
+
+    async incrementServeCounts(chat: DomainChat, usernames: string[]): Promise<void> {
+        if (usernames.length === 0) return;
+        const pk = chatPk(chat);
+        await this._do((session) =>
+            session.executeQuery(
+                `
+                DECLARE $chat_pk AS Utf8;
+                DECLARE $usernames AS List<Utf8>;
+                UPDATE ${TABLES.chatMembers}
+                    SET served_count = COALESCE(served_count, 0u) + 1u
+                    WHERE chat_pk = $chat_pk AND username IN $usernames;
+                `,
+                {
+                    $chat_pk: TypedValues.utf8(pk),
+                    $usernames: TypedValues.list(Types.UTF8, usernames),
                 },
                 TX_RW,
             ),
@@ -147,20 +158,28 @@ export class YdbStorage implements Storage {
 
     async addMember(chat: DomainChat, username: string): Promise<void> {
         const pk = chatPk(chat);
+        // INSERT-or-keep: only sets served_count = 0 for genuinely new rows.
+        // Existing rows keep whatever counter they had.
         await this._do((session) =>
             session.executeQuery(
                 `
                 DECLARE $chat_pk AS Utf8;
                 DECLARE $username AS Utf8;
-                UPSERT INTO ${TABLES.chatMembers} (chat_pk, username)
-                    VALUES ($chat_pk, $username);
+                INSERT INTO ${TABLES.chatMembers} (chat_pk, username, served_count)
+                    VALUES ($chat_pk, $username, 0u);
                 `,
                 {
                     $chat_pk: TypedValues.utf8(pk),
                     $username: TypedValues.utf8(username),
                 },
                 TX_RW,
-            ),
+            ).catch((e: unknown) => {
+                // INSERT throws on conflict — re-add of an existing member is a no-op
+                // by contract, so swallow the duplicate-key error.
+                const msg = (e as { message?: string }).message ?? '';
+                if (/Conflict with existing key/i.test(msg) || /duplicate/i.test(msg)) return;
+                throw e;
+            }),
         );
     }
 
@@ -245,7 +264,6 @@ export class YdbStorage implements Storage {
                 `
                 DECLARE $chat_pk AS Utf8;
                 DELETE FROM ${TABLES.chatMembers} WHERE chat_pk = $chat_pk;
-                DELETE FROM ${TABLES.roundServed} WHERE chat_pk = $chat_pk;
                 DELETE FROM ${TABLES.chatProps} WHERE chat_pk = $chat_pk;
                 `,
                 { $chat_pk: TypedValues.utf8(pk) },
@@ -256,10 +274,12 @@ export class YdbStorage implements Storage {
 }
 
 /**
- * YQL DDL for the four-table schema. We use raw YQL `CREATE TABLE` (executed
- * via the QueryClient) instead of `session.createTable(...)`: tables created
- * through the table API aren't registered with the YQL compiler and reads via
- * `executeQuery` fail with "Cannot find table". Discovered the hard way.
+ * YQL DDL for the schema. Tables created via `session.createTable` are
+ * invisible to YQL queries on YDB Serverless 5.11.x — see CLAUDE.md.
+ *
+ * Schema v2 (introduced for the counter-based scheduler):
+ *   - `chat_members.served_count Uint64` (NULL == 0 via COALESCE in reads);
+ *   - `round_served` table dropped (was schema v1).
  */
 export const TABLE_DDL: Record<string, string> = {
     [TABLES.chatProps]: `
@@ -272,15 +292,9 @@ export const TABLE_DDL: Record<string, string> = {
     `,
     [TABLES.chatMembers]: `
         CREATE TABLE IF NOT EXISTS ${TABLES.chatMembers} (
-            chat_pk  Utf8 NOT NULL,
-            username Utf8 NOT NULL,
-            PRIMARY KEY (chat_pk, username)
-        );
-    `,
-    [TABLES.roundServed]: `
-        CREATE TABLE IF NOT EXISTS ${TABLES.roundServed} (
-            chat_pk  Utf8 NOT NULL,
-            username Utf8 NOT NULL,
+            chat_pk      Utf8 NOT NULL,
+            username     Utf8 NOT NULL,
+            served_count Uint64,
             PRIMARY KEY (chat_pk, username)
         );
     `,

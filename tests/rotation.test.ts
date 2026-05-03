@@ -1,14 +1,19 @@
 /**
- * Rotation behaviour tests — verifies the fairness guarantees of `Service.duty`
- * after the round-accumulator fix.
+ * Rotation tests for the counter-based scheduler.
  *
- * `properties.roundServed` accumulates everyone who served in the current round.
- * When the eligible set drains, the round resets and the next pick comes from
- * the full user list. This guarantees, for any dutyCount and user count:
- *   - within `ceil(N/dutyCount)` calls each user has served at least once
- *   - across enough rounds, every pair (or k-subset) eventually appears
+ * Algorithm: each member has a `servedCount` (total times on duty in this chat).
+ * Each `/duty` picks `dutyCount` members with the lowest counts; ties broken
+ * by username (alphabetic). Counters of picked members increment by 1.
+ *
+ * Properties verified here:
+ *   - perfect long-run fairness — every K days each member has served K·k/N
+ *     times (when divisible) or differs by at most 1 (otherwise);
+ *   - new /reg-d members go to the front of the queue (count = 0);
+ *   - /unreg leaves no stale state — the gone member just disappears;
+ *   - max-spread is bounded — at any instant `max(count) - min(count) <= 1` if
+ *     no members were added/removed mid-run.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 
 import { Service } from '../src/service';
 import { InMemoryStorage } from '../src/storage/memory';
@@ -24,138 +29,168 @@ beforeEach(() => {
     service = new Service(storage);
 });
 
-afterEach(() => {
-    vi.restoreAllMocks();
-});
-
-async function seedMembers(usernames: string[]): Promise<void> {
+async function seed(usernames: string[], dutyCount: number): Promise<void> {
     for (const u of usernames) await storage.addMember(chat, u);
+    await storage.setProperties(chat, { dutyCount });
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
- * dutyCount=2 with 3 users — the historic pair/solo lock-in is gone.
- * ────────────────────────────────────────────────────────────────────────── */
+async function counts(): Promise<Record<string, number>> {
+    const state = await storage.getChatState(chat);
+    return Object.fromEntries(state.members.map((m) => [m.username, m.servedCount]));
+}
 
-describe('rotation: dutyCount=2 with 3 users — all pairs eventually appear', () => {
-    it('over 60 days with real Math.random, more than one distinct pair is produced', async () => {
-        await seedMembers(['alice', 'bob', 'carol']);
-        await storage.setChatState(chat, { dutyCount: 2, roundServed: [] });
+describe('rotation: dutyCount=1, N=3 — strict 3-day cycle', () => {
+    it('over 30 days each member is on duty exactly 10 times', async () => {
+        await seed(['alice', 'bob', 'carol'], 1);
 
-        const seenPairs = new Set<string>();
-        for (let day = 0; day < 60; day++) {
-            const duty = await service.duty(chat);
-            if (duty.length === 2) seenPairs.add([...duty].sort().join(','));
-        }
+        for (let day = 0; day < 30; day++) await service.duty(chat);
 
-        expect(seenPairs.size).toBeGreaterThan(1);
+        expect(await counts()).toEqual({ alice: 10, bob: 10, carol: 10 });
+    });
+
+    it('first three days are deterministic: a, b, c', async () => {
+        await seed(['alice', 'bob', 'carol'], 1);
+
+        const day1 = await service.duty(chat);
+        const day2 = await service.duty(chat);
+        const day3 = await service.duty(chat);
+        const day4 = await service.duty(chat);
+
+        expect(day1).toEqual(['@alice']);
+        expect(day2).toEqual(['@bob']);
+        expect(day3).toEqual(['@carol']);
+        expect(day4).toEqual(['@alice']); // round restarts
     });
 });
 
-describe('rotation: dutyCount=2 with 3 users — round closes in 2 days', () => {
-    it('with frozen shuffle, every user is picked across 6 days', async () => {
-        vi.spyOn(Math, 'random').mockReturnValue(0.5);
+describe('rotation: dutyCount=2, N=3 — every pair appears, fairness 2/3', () => {
+    it('over 6 days each member serves exactly 4 times (=6·2/3)', async () => {
+        await seed(['alice', 'bob', 'carol'], 2);
 
-        await seedMembers(['alice', 'bob', 'carol']);
-        await storage.setChatState(chat, { dutyCount: 2, roundServed: [] });
+        for (let day = 0; day < 6; day++) await service.duty(chat);
 
-        const counts: Record<string, number> = { '@alice': 0, '@bob': 0, '@carol': 0 };
-        for (let day = 0; day < 6; day++) {
+        expect(await counts()).toEqual({ alice: 4, bob: 4, carol: 4 });
+    });
+
+    it('all three pairs appear within first 3 days', async () => {
+        await seed(['alice', 'bob', 'carol'], 2);
+
+        const seen = new Set<string>();
+        for (let day = 0; day < 3; day++) {
             const duty = await service.duty(chat);
-            for (const u of duty) counts[u] = (counts[u] ?? 0) + 1;
+            seen.add([...duty].sort().join(','));
         }
 
-        expect(counts['@alice']).toBe(3);
-        expect(counts['@bob']).toBe(3);
-        expect(counts['@carol']).toBe(3);
+        expect(seen).toEqual(new Set(['@alice,@bob', '@alice,@carol', '@bob,@carol']));
     });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
- * USER-REPORTED scenario: 3 people, one /unreg's, then /reg's back.
- * Post-fix the returnee shows up in pairs, not just solo.
- * ────────────────────────────────────────────────────────────────────────── */
+describe('rotation: dutyCount=2, N=4 — fixed pair pattern (math says so)', () => {
+    it('over 6 days each member serves exactly 3 times', async () => {
+        await seed(['alice', 'bob', 'carol', 'dave'], 2);
 
-describe('rotation: user-reported vacation scenario (dutyCount=2)', () => {
-    it('after /reg, @carol appears in pairs across rounds', async () => {
-        await seedMembers(['alice', 'bob']);
-        await storage.setChatState(chat, { dutyCount: 2, roundServed: ['alice', 'bob'] });
+        for (let day = 0; day < 6; day++) await service.duty(chat);
+
+        expect(await counts()).toEqual({ alice: 3, bob: 3, carol: 3, dave: 3 });
+    });
+
+    it('with N % k == 0 only adjacent-by-alpha pairs appear (alpha tiebreak)', async () => {
+        // This documents the expected limitation: alpha tiebreak gives (a,b) / (c,d) cycle.
+        await seed(['alice', 'bob', 'carol', 'dave'], 2);
+
+        const day1 = [...(await service.duty(chat))].sort();
+        const day2 = [...(await service.duty(chat))].sort();
+        const day3 = [...(await service.duty(chat))].sort();
+
+        expect(day1).toEqual(['@alice', '@bob']);
+        expect(day2).toEqual(['@carol', '@dave']);
+        expect(day3).toEqual(['@alice', '@bob']);
+    });
+});
+
+describe('rotation: dutyCount=3, N=5', () => {
+    it('over 5 days each member serves exactly 3 times', async () => {
+        await seed(['alice', 'bob', 'carol', 'dave', 'erin'], 3);
+
+        for (let day = 0; day < 5; day++) await service.duty(chat);
+
+        expect(await counts()).toEqual({ alice: 3, bob: 3, carol: 3, dave: 3, erin: 3 });
+    });
+});
+
+describe('rotation: invariant — max-min spread is bounded by 1', () => {
+    it('throughout 50 picks with random N and k, no member is ever 2 ahead of another', async () => {
+        await seed(['alice', 'bob', 'carol', 'dave'], 2);
+
+        for (let day = 0; day < 50; day++) {
+            await service.duty(chat);
+            const c = Object.values(await counts());
+            expect(Math.max(...c) - Math.min(...c)).toBeLessThanOrEqual(1);
+        }
+    });
+});
+
+describe('rotation: /reg mid-run — newcomer joins the front of the queue', () => {
+    it('after several rounds, a fresh member with count=0 is picked next', async () => {
+        await seed(['alice', 'bob'], 1);
+        for (let day = 0; day < 10; day++) await service.duty(chat); // alice/bob each at 5
 
         await service.reg(chat, 'carol');
+        const day1 = await service.duty(chat);
 
-        const seenPairs = new Set<string>();
-        let carolInAnyPair = false;
-        for (let day = 0; day < 60; day++) {
-            const duty = await service.duty(chat);
-            if (duty.length === 2) {
-                seenPairs.add([...duty].sort().join(','));
-                if (duty.includes('@carol')) carolInAnyPair = true;
-            }
-        }
+        expect(day1).toEqual(['@carol']);
+    });
 
-        expect(seenPairs.size).toBeGreaterThan(1);
-        expect(carolInAnyPair).toBe(true);
+    it('carol catches up: after enough days her count is no longer the lowest', async () => {
+        await seed(['alice', 'bob'], 1);
+        for (let day = 0; day < 10; day++) await service.duty(chat); // alice=5, bob=5
+
+        await service.reg(chat, 'carol');
+        // Pick until carol has caught up.
+        for (let day = 0; day < 5; day++) await service.duty(chat);
+
+        const c = await counts();
+        // carol picked all 5 days (was 5 behind), now everyone at 5.
+        expect(c.carol).toBe(5);
+        expect(Math.max(...Object.values(c)) - Math.min(...Object.values(c))).toBeLessThanOrEqual(1);
     });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
- * dutyCount=1 fairness: each user picked exactly once per N-day round.
- * ────────────────────────────────────────────────────────────────────────── */
-
-describe('rotation: dutyCount=1 with 3 users — every user picked each round', () => {
-    it('over 30 days with frozen shuffle, picks are exactly 10 / 10 / 10', async () => {
-        vi.spyOn(Math, 'random').mockReturnValue(0.5);
-
-        await seedMembers(['alice', 'bob', 'carol']);
-        await storage.setChatState(chat, { dutyCount: 1, roundServed: [] });
-
-        const counts: Record<string, number> = { '@alice': 0, '@bob': 0, '@carol': 0 };
-        for (let day = 0; day < 30; day++) {
-            const [pick] = await service.duty(chat);
-            if (pick) counts[pick] = (counts[pick] ?? 0) + 1;
-        }
-
-        expect(counts).toEqual({ '@alice': 10, '@bob': 10, '@carol': 10 });
-    });
-});
-
-/* ──────────────────────────────────────────────────────────────────────────
- * data hygiene: /unreg leaves the user's name in roundServed.
- * Harmless because the duty filter narrows by user-list membership,
- * and a stale name in roundServed only ever shrinks `eligible`, which
- * triggers an earlier round reset — not a correctness issue.
- * ────────────────────────────────────────────────────────────────────────── */
-
-describe('rotation: /unreg leaves stale entry in roundServed (harmless)', () => {
-    it('post-unreg the name remains; next /duty picks the remaining user', async () => {
-        await seedMembers(['alice', 'bob']);
-        await storage.setChatState(chat, { dutyCount: 1, roundServed: ['alice'] });
+describe('rotation: /unreg mid-run — gone member leaves no trail', () => {
+    it('after unreg, remaining members continue rotating fairly', async () => {
+        await seed(['alice', 'bob', 'carol'], 1);
+        for (let day = 0; day < 6; day++) await service.duty(chat); // each at 2
 
         await service.unreg(chat, 'alice');
 
-        const props = (await storage.getChatState(chat)).props;
-        expect(props.roundServed).toContain('alice');
+        for (let day = 0; day < 6; day++) await service.duty(chat); // bob/carol each gain 3
 
-        const day1 = await service.duty(chat);
-        expect(day1).toEqual(['@bob']);
+        const c = await counts();
+        expect(c.alice).toBeUndefined();
+        expect(c.bob).toBe(5);
+        expect(c.carol).toBe(5);
     });
 });
 
-/* ──────────────────────────────────────────────────────────────────────────
- * dutyCount == userCount — exhausted-round path, single common code path.
- * ────────────────────────────────────────────────────────────────────────── */
+describe('rotation: /reset — counters are wiped along with members', () => {
+    it('post-reset every newly /reg-d member starts at count=0', async () => {
+        await seed(['alice', 'bob'], 1);
+        for (let day = 0; day < 10; day++) await service.duty(chat);
 
-describe('rotation: dutyCount == users — round resets and picks all again', () => {
-    it('returns the full user list and writes properties (single code path now)', async () => {
-        await seedMembers(['alice', 'bob', 'carol']);
-        await storage.setChatState(chat, {
-            dutyCount: 3,
-            roundServed: ['alice', 'bob', 'carol'],
-        });
+        await service.reset(chat);
+        await service.reg(chat, 'alice');
+        await service.reg(chat, 'bob');
 
-        const duty = await service.duty(chat);
+        expect(await counts()).toEqual({ alice: 0, bob: 0 });
+    });
+});
 
-        expect([...duty].sort()).toEqual(['@alice', '@bob', '@carol']);
-        const after = (await storage.getChatState(chat)).props.roundServed;
-        expect([...after].sort()).toEqual(['alice', 'bob', 'carol']);
+describe('rotation: dutyCount > N — everyone serves every day', () => {
+    it('over 10 days with N=2, dutyCount=5, each member is at count=10', async () => {
+        await seed(['alice', 'bob'], 5);
+
+        for (let day = 0; day < 10; day++) await service.duty(chat);
+
+        expect(await counts()).toEqual({ alice: 10, bob: 10 });
     });
 });

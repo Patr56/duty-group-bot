@@ -7,7 +7,12 @@ export interface DomainChat {
 
 export interface Properties {
     dutyCount: number;
-    roundServed: string[];
+}
+
+export interface Member {
+    username: string;
+    /** How many times this member has been on duty in this chat. NULL/missing on storage = 0. */
+    servedCount: number;
 }
 
 export interface Trigger {

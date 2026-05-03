@@ -44,29 +44,28 @@ function makeFakeDriver(): FakeDriverState {
 }
 
 describe('YdbStorage.getChatState', () => {
-    it('returns defaults when chat is unknown (all three result sets empty)', async () => {
+    it('returns defaults when chat is unknown (both result sets empty)', async () => {
         const fake = makeFakeDriver();
-        fake.responses.push({ resultSets: [{ rows: [] }, { rows: [] }, { rows: [] }] });
+        fake.responses.push({ resultSets: [{ rows: [] }, { rows: [] }] });
         const storage = new YdbStorage(fake.driver);
 
         const state = await storage.getChatState({ id: -100, type: 'group' });
 
-        expect(state.props).toEqual({ dutyCount: 1, roundServed: [] });
+        expect(state.props).toEqual({ dutyCount: 1 });
         expect(state.members).toEqual([]);
     });
 
-    it('parses props + members + roundServed from three result sets', async () => {
+    it('parses props + members from two result sets', async () => {
         const fake = makeFakeDriver();
         fake.responses.push({
             resultSets: [
                 { rows: [{ items: [{ uint64Value: '5' }] }] },
                 {
                     rows: [
-                        { items: [{ textValue: 'alice' }] },
-                        { items: [{ textValue: 'bob' }] },
+                        { items: [{ textValue: 'alice' }, { uint64Value: '3' }] },
+                        { items: [{ textValue: 'bob' }, { uint64Value: '7' }] },
                     ],
                 },
-                { rows: [{ items: [{ textValue: 'alice' }] }] },
             ],
         });
         const storage = new YdbStorage(fake.driver);
@@ -74,16 +73,29 @@ describe('YdbStorage.getChatState', () => {
         const state = await storage.getChatState({ id: -100, type: 'group' });
 
         expect(state.props.dutyCount).toBe(5);
-        expect(state.members).toEqual(['alice', 'bob']);
-        expect(state.props.roundServed).toEqual(['alice']);
+        expect(state.members).toEqual([
+            { username: 'alice', servedCount: 3 },
+            { username: 'bob', servedCount: 7 },
+        ]);
 
         // Sanity: pk built as "type#id"
         expect(JSON.stringify(fake.calls[0]?.params)).toContain('group#-100');
     });
 
-    it('queries all three tables in a single executeQuery (one round-trip)', async () => {
+    it('uses COALESCE so NULL served_count is read as 0', async () => {
         const fake = makeFakeDriver();
-        fake.responses.push({ resultSets: [{ rows: [] }, { rows: [] }, { rows: [] }] });
+        fake.responses.push({ resultSets: [{ rows: [] }, { rows: [] }] });
+        const storage = new YdbStorage(fake.driver);
+
+        await storage.getChatState({ id: 1, type: 'private' });
+
+        const q = fake.calls[0]?.query ?? '';
+        expect(q).toContain('COALESCE(served_count');
+    });
+
+    it('queries both tables in a single executeQuery (one round-trip)', async () => {
+        const fake = makeFakeDriver();
+        fake.responses.push({ resultSets: [{ rows: [] }, { rows: [] }] });
         const storage = new YdbStorage(fake.driver);
 
         await storage.getChatState({ id: 1, type: 'private' });
@@ -92,34 +104,44 @@ describe('YdbStorage.getChatState', () => {
         const q = fake.calls[0]?.query ?? '';
         expect(q).toContain(TABLES.chatProps);
         expect(q).toContain(TABLES.chatMembers);
-        expect(q).toContain(TABLES.roundServed);
     });
 });
 
-describe('YdbStorage.setChatState', () => {
-    it('writes chat_props and replaces round_served in one query', async () => {
+describe('YdbStorage.setProperties', () => {
+    it('UPSERTs chat_props with dutyCount only (no roundServed anymore)', async () => {
         const fake = makeFakeDriver();
         const storage = new YdbStorage(fake.driver);
 
-        await storage.setChatState(
-            { id: -100, type: 'group' },
-            { dutyCount: 3, roundServed: ['alice', 'bob'] },
-        );
+        await storage.setProperties({ id: -100, type: 'group' }, { dutyCount: 3 });
 
         expect(fake.calls).toHaveLength(1);
         const q = fake.calls[0]?.query ?? '';
         expect(q).toContain(`UPSERT INTO ${TABLES.chatProps}`);
-        expect(q).toContain(`DELETE FROM ${TABLES.roundServed}`);
-        expect(q).toContain(`UPSERT INTO ${TABLES.roundServed}`);
+        expect(q).not.toContain('round_served');
     });
+});
 
-    it('handles empty roundServed without an empty-set rejection', async () => {
+describe('YdbStorage.incrementServeCounts', () => {
+    it('issues an UPDATE with COALESCE + IN clause for the given usernames', async () => {
         const fake = makeFakeDriver();
         const storage = new YdbStorage(fake.driver);
 
-        await expect(
-            storage.setChatState({ id: 1, type: 'private' }, { dutyCount: 1, roundServed: [] }),
-        ).resolves.toBeUndefined();
+        await storage.incrementServeCounts({ id: -100, type: 'group' }, ['alice', 'carol']);
+
+        expect(fake.calls).toHaveLength(1);
+        const q = fake.calls[0]?.query ?? '';
+        expect(q).toContain(`UPDATE ${TABLES.chatMembers}`);
+        expect(q).toContain('COALESCE(served_count');
+        expect(q).toContain('IN $usernames');
+    });
+
+    it('is a no-op for empty username list (does not touch the driver)', async () => {
+        const fake = makeFakeDriver();
+        const storage = new YdbStorage(fake.driver);
+
+        await storage.incrementServeCounts({ id: -100, type: 'group' }, []);
+
+        expect(fake.calls).toHaveLength(0);
     });
 });
 
@@ -156,13 +178,32 @@ describe('YdbStorage.memberExists', () => {
 });
 
 describe('YdbStorage.addMember / removeMember', () => {
-    it('addMember UPSERTs into chat_members', async () => {
+    it('addMember INSERTs into chat_members with served_count=0u', async () => {
         const fake = makeFakeDriver();
         const storage = new YdbStorage(fake.driver);
 
         await storage.addMember({ id: -100, type: 'group' }, 'alice');
 
-        expect(fake.calls[0]?.query).toContain(`UPSERT INTO ${TABLES.chatMembers}`);
+        const q = fake.calls[0]?.query ?? '';
+        expect(q).toContain(`INSERT INTO ${TABLES.chatMembers}`);
+        expect(q).toContain('0u');
+    });
+
+    it('addMember swallows duplicate-key conflicts (idempotent re-add)', async () => {
+        const conflictDriver = {
+            tableClient: {
+                async withSession<T>(cb: (s: Session) => Promise<T>): Promise<T> {
+                    return cb({
+                        executeQuery: (async () => {
+                            throw new Error('Conflict with existing key.');
+                        }) as Session['executeQuery'],
+                    } as Session);
+                },
+            },
+        } as unknown as Driver;
+        const s = new YdbStorage(conflictDriver);
+
+        await expect(s.addMember({ id: 1, type: 'group' }, 'alice')).resolves.toBeUndefined();
     });
 
     it('removeMember DELETEs from chat_members', async () => {
@@ -210,7 +251,7 @@ describe('YdbStorage.listTriggers', () => {
 });
 
 describe('YdbStorage.clearChat', () => {
-    it('issues three DELETEs in a single statement', async () => {
+    it('issues two DELETEs in a single statement (no round_served any more)', async () => {
         const fake = makeFakeDriver();
         const storage = new YdbStorage(fake.driver);
 
@@ -219,7 +260,7 @@ describe('YdbStorage.clearChat', () => {
         expect(fake.calls).toHaveLength(1);
         const q = fake.calls[0]?.query ?? '';
         expect(q).toContain(`DELETE FROM ${TABLES.chatMembers}`);
-        expect(q).toContain(`DELETE FROM ${TABLES.roundServed}`);
         expect(q).toContain(`DELETE FROM ${TABLES.chatProps}`);
+        expect(q).not.toContain('round_served');
     });
 });

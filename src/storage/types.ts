@@ -1,28 +1,28 @@
-import type { DomainChat, Properties } from '../types';
+import type { DomainChat, Member, Properties } from '../types';
 
 /**
- * Snapshot of a chat: settings + member list. `members` and `props.roundServed`
- * carry BARE usernames (no `@`). Service prefixes `@` only at the boundary
- * with the Controller.
- *
- * If the chat has no settings record yet, `props` is the default
- * `{ dutyCount: 1, roundServed: [] }`. Self-heal lives at the storage layer.
+ * Snapshot of a chat: settings + members with per-user `servedCount`.
+ * If the chat has no settings record yet, `props` defaults to `{ dutyCount: 1 }`
+ * (self-heal at the storage layer).
  */
 export interface ChatState {
     props: Properties;
-    members: string[];
+    members: Member[];
 }
 
 export interface Storage {
-    /** One read of {chat_props ∪ chat_members ∪ round_served} for the chat. */
+    /** Single read of {chat_props ∪ chat_members} for the chat. */
     getChatState(chat: DomainChat): Promise<ChatState>;
 
+    /** Write chat-level settings (dutyCount only). Used by `init` and `setDutyCount`. */
+    setProperties(chat: DomainChat, props: Properties): Promise<void>;
+
     /**
-     * Atomically replaces both the chat-level properties and the round_served
-     * list. Used by `init`, `setDutyCount`, and `duty` (which always writes a
-     * fresh roundServed value — including `[]` after a round reset).
+     * Atomic `served_count += 1` for the given usernames in this chat.
+     * Treats NULL/missing counters as 0. Members not present are silently
+     * skipped (no INSERT — only existing rows are bumped).
      */
-    setChatState(chat: DomainChat, props: Properties): Promise<void>;
+    incrementServeCounts(chat: DomainChat, usernames: string[]): Promise<void>;
 
     /** True iff an explicit chat_props record exists (drives `/start` messaging). */
     propsExists(chat: DomainChat): Promise<boolean>;
@@ -35,6 +35,6 @@ export interface Storage {
     removeTrigger(chat: DomainChat): Promise<void>;
     listTriggers(): Promise<DomainChat[]>;
 
-    /** Deletes chat_props, chat_members and round_served for the chat. Trigger is NOT touched. */
+    /** Deletes chat_props and chat_members for the chat. Trigger is NOT touched. */
     clearChat(chat: DomainChat): Promise<void>;
 }
