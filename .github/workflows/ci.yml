@@ -17,11 +17,14 @@ jobs:
 
       - run: npm ci
 
-      - name: Syntax check
+      - name: Type check
         run: npm run check
 
       - name: Lint
         run: npm run lint
 
-      - name: Tests (placeholder)
+      - name: Tests
         run: npm test
+
+      - name: Build
+        run: npm run build

@@ -25,7 +25,10 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci --omit=dev
+      - run: npm ci
+
+      - name: Build bundle
+        run: npm run build
 
       - name: Deploy function version
         uses: yc-actions/yc-sls-function@v3
@@ -36,19 +39,26 @@ jobs:
           bucket: duty-group-bot-deploy
           runtime: nodejs22
           memory: 128Mb
-          entrypoint: index.handler
-          execution-timeout: '3'
+          entrypoint: dist/index.handler
+          execution-timeout: '60'
           service-account: ajerdikcv0fdb1s370uf
           environment: |
             BOT_TOKEN=${{ secrets.BOT_TOKEN }}
             OWNER_ID=${{ secrets.OWNER_ID }}
+            AWS_ACCESS_KEY_ID=${{ secrets.YC_S3_ACCESS_KEY_ID }}
+            AWS_SECRET_ACCESS_KEY=${{ secrets.YC_S3_SECRET_ACCESS_KEY }}
+            AWS_REGION=ru-central1
           include: |
-            *.js
+            dist/**
             package.json
-            package-lock.json
-            node_modules/**
           exclude: |
             .github/**
             .git/**
             **/*.md
             eslint.config.js
+            tsconfig.json
+            esbuild.config.mjs
+            vitest.config.ts
+            src/**
+            tests/**
+            node_modules/**
