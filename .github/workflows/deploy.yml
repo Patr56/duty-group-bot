@@ -1,0 +1,53 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or SHA to deploy
+        required: true
+        default: master
+
+concurrency:
+  group: deploy-yc-function
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --omit=dev
+
+      - name: Deploy function version
+        uses: yc-actions/yc-sls-function@v3
+        with:
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
+          folder-id: b1givfkfh806tp641l6l
+          function-name: duty-group-bot
+          runtime: nodejs22
+          memory: 128Mb
+          entrypoint: index.handler
+          execution-timeout: '3'
+          service-account: ajerdikcv0fdb1s370uf
+          environment: |
+            BOT_TOKEN=${{ secrets.BOT_TOKEN }}
+            OWNER_ID=${{ secrets.OWNER_ID }}
+          include: |
+            *.js
+            package.json
+            package-lock.json
+            node_modules/**
+          exclude: |
+            .github/**
+            .git/**
+            **/*.md
+            eslint.config.js

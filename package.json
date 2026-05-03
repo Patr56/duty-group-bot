@@ -3,9 +3,14 @@
   "version": "1.0.0",
   "description": "Telegram бот для определения дежурных из списка участников.",
   "main": "index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "run": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "check": "node --check index.js && node --check controller.js && node --check service.js && node --check errors.js",
+    "lint": "eslint .",
+    "test": "echo \"No tests yet — placeholder\""
   },
   "repository": {
     "type": "git",
@@ -22,5 +27,10 @@
     "nanoid": "^3.1.12",
     "telegraf": "^3.38.0",
     "telegraf-command-parts": "^1.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0"
   }
 }
