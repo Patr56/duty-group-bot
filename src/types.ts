@@ -7,7 +7,6 @@ export interface DomainChat {
 
 export interface Properties {
     dutyCount: number;
-    countPeople: number;
     lastDuty: string[];
 }
 
