@@ -33,6 +33,7 @@ jobs:
           yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
           folder-id: b1givfkfh806tp641l6l
           function-name: duty-group-bot
+          bucket: duty-group-bot-deploy
           runtime: nodejs22
           memory: 128Mb
           entrypoint: index.handler
