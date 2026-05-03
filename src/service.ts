@@ -17,7 +17,7 @@ const TRIGGER_FOLDER_NAME = 'trigger';
 const BUCKET_NAME = 'duty-group-bot-storage';
 
 const INIT_TRIGGER = { time: 9 };
-const INIT_PROPERTIES: Properties = { dutyCount: 2, countPeople: 0, lastDuty: [] };
+const INIT_PROPERTIES: Properties = { dutyCount: 1, lastDuty: [] };
 
 export class Service {
     constructor(private readonly s3: S3Client) {}
@@ -149,8 +149,8 @@ export class Service {
         } catch (e) {
             throw new ServiceError(`Ошибка при регистрации пользователя @${username}.`, e);
         }
-        const properties = await this._incrementUser(chat);
-        return `@${username} добавлен в дежурные.\nКоличество дежурных: ${properties.countPeople}`;
+        const count = (await this.list(chat)).length;
+        return `@${username} добавлен в дежурные.\nКоличество дежурных: ${count}`;
     }
 
     async unreg(chat: DomainChat, username: string): Promise<string> {
@@ -166,8 +166,8 @@ export class Service {
         } catch (e) {
             throw new ServiceError(`Ошибка при удалении пользователя ${username}.`, e);
         }
-        const properties = await this._decrementUser(chat);
-        return `@${username} удалён из дежурных.\nКоличество дежурных: ${properties.countPeople}`;
+        const count = (await this.list(chat)).length;
+        return `@${username} удалён из дежурных.\nКоличество дежурных: ${count}`;
     }
 
     async duty(chat: DomainChat): Promise<string[]> {
@@ -258,6 +258,7 @@ export class Service {
             const response = await this.s3.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
             return await readJson<Properties>(response.Body);
         } catch (e) {
+            if (isNotFound(e)) return { ...INIT_PROPERTIES };
             if (e instanceof ServiceError) throw e;
             throw new ServiceError(`Ошибка при получении настроек для чата ${key}.`, e);
         }
@@ -277,16 +278,6 @@ export class Service {
         return newProperties;
     }
 
-    private async _incrementUser(chat: DomainChat): Promise<Properties> {
-        const properties = await this._getProperties(chat);
-        return this._updateProperties(chat, { ...properties, countPeople: properties.countPeople + 1 });
-    }
-
-    private async _decrementUser(chat: DomainChat): Promise<Properties> {
-        const properties = await this._getProperties(chat);
-        if (properties.countPeople <= 0) return properties;
-        return this._updateProperties(chat, { ...properties, countPeople: properties.countPeople - 1 });
-    }
 }
 
 function isNotFound(e: unknown): boolean {
