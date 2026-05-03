@@ -7,7 +7,7 @@ export interface DomainChat {
 
 export interface Properties {
     dutyCount: number;
-    lastDuty: string[];
+    roundServed: string[];
 }
 
 export interface Trigger {

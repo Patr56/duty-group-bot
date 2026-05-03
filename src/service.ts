@@ -17,7 +17,7 @@ const TRIGGER_FOLDER_NAME = 'trigger';
 const BUCKET_NAME = 'duty-group-bot-storage';
 
 const INIT_TRIGGER = { time: 9 };
-const INIT_PROPERTIES: Properties = { dutyCount: 1, lastDuty: [] };
+const INIT_PROPERTIES: Properties = { dutyCount: 1, roundServed: [] };
 
 export class Service {
     constructor(private readonly s3: S3Client) {}
@@ -174,17 +174,19 @@ export class Service {
         const dutyUsers = await this.list(chat);
         const properties = await this._getProperties(chat);
 
-        if (this._compareList(dutyUsers, properties.lastDuty)) {
-            return dutyUsers;
+        let roundServed = properties.roundServed;
+        let eligible = dutyUsers.filter((u) => !roundServed.includes(u));
+        if (eligible.length === 0) {
+            roundServed = [];
+            eligible = dutyUsers;
         }
 
-        const lastDuty = dutyUsers
-            .filter((u) => !properties.lastDuty.includes(u))
+        const newDuty = eligible
             .sort(() => Math.random() - 0.5)
             .slice(0, properties.dutyCount);
 
-        const updated = await this._updateProperties(chat, { ...properties, lastDuty });
-        return updated.lastDuty;
+        await this._updateProperties(chat, { ...properties, roundServed: [...roundServed, ...newDuty] });
+        return newDuty;
     }
 
     async list(chat: DomainChat): Promise<string[]> {
@@ -208,13 +210,6 @@ export class Service {
             if (name && name !== PROPERTIES_NAME) users.push(name);
         }
         return users;
-    }
-
-    private _compareList(a: readonly string[], b: readonly string[]): boolean {
-        if (a.length !== b.length) return false;
-        const aSorted = [...a].sort();
-        const bSorted = [...b].sort();
-        return aSorted.every((v, i) => v === bSorted[i]);
     }
 
     private _getChatReadableName(chat: DomainChat): string {
@@ -256,7 +251,12 @@ export class Service {
         const key = this._getPropertiesKey(chat);
         try {
             const response = await this.s3.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
-            return await readJson<Properties>(response.Body);
+            // back-compat: pre-fix schema used `lastDuty` for the same data; promote it to `roundServed`.
+            const raw = await readJson<Partial<Properties> & { lastDuty?: string[] }>(response.Body);
+            return {
+                dutyCount: raw.dutyCount ?? INIT_PROPERTIES.dutyCount,
+                roundServed: raw.roundServed ?? raw.lastDuty ?? [],
+            };
         } catch (e) {
             if (isNotFound(e)) return { ...INIT_PROPERTIES };
             if (e instanceof ServiceError) throw e;
