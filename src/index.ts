@@ -1,27 +1,39 @@
-import { S3Client } from '@aws-sdk/client-s3';
+import { Driver, MetadataAuthService } from 'ydb-sdk';
 
 import { Service } from './service';
 import { Controller } from './controller';
 import { createHandler } from './handler';
+import { YdbStorage } from './storage/ydb';
 import type { YcFunctionContext } from './types';
 
 const token = process.env.BOT_TOKEN;
 const ownerId = process.env.OWNER_ID;
-if (!token || !ownerId) {
-    throw new Error('BOT_TOKEN and OWNER_ID env vars are required');
+const ydbEndpoint = process.env.YDB_ENDPOINT;
+const ydbDatabase = process.env.YDB_DATABASE;
+if (!token || !ownerId || !ydbEndpoint || !ydbDatabase) {
+    throw new Error('BOT_TOKEN, OWNER_ID, YDB_ENDPOINT and YDB_DATABASE env vars are required');
 }
 
-const s3 = new S3Client({
-    region: process.env.AWS_REGION ?? 'ru-central1',
-    endpoint: 'https://storage.yandexcloud.net',
-    forcePathStyle: true,
+const driver = new Driver({
+    endpoint: ydbEndpoint,
+    database: ydbDatabase,
+    authService: new MetadataAuthService(),
 });
 
 let controller: Controller | undefined;
+let driverReady: Promise<boolean> | undefined;
 
 export const handler = async (event: unknown, functionContext: YcFunctionContext) => {
+    if (!driverReady) driverReady = driver.ready(10_000);
+    const ready = await driverReady;
+    if (!ready) {
+        driverReady = undefined;
+        throw new Error('YDB driver not ready');
+    }
+
     if (!controller) {
-        const service = new Service(s3);
+        const storage = new YdbStorage(driver);
+        const service = new Service(storage);
         controller = new Controller(service, token, ownerId, functionContext);
     }
     return createHandler({ controller })(event as Parameters<ReturnType<typeof createHandler>>[0], functionContext);
