@@ -150,7 +150,7 @@ describe('Service.duty — chat WITHOUT properties.json (self-heal + new dutyCou
         // properties.json got written with new dutyCount default
         expect(writes).toHaveLength(1);
         expect(writes[0]?.dutyCount).toBe(1);
-        expect(writes[0]?.lastDuty).toEqual(duty);
+        expect(writes[0]?.roundServed).toEqual(duty);
     });
 });
 
@@ -186,7 +186,7 @@ describe('Service.init — defaults', () => {
         await service.init(chat);
 
         expect(written?.dutyCount).toBe(1);
-        expect(written?.lastDuty).toEqual([]);
+        expect(written?.roundServed).toEqual([]);
     });
 });
 
@@ -206,7 +206,7 @@ describe('Service._getProperties via duty — non-404 errors still bubble up', (
 });
 
 describe('Service.duty — happy path with existing properties.json', () => {
-    it('reads dutyCount from existing properties and avoids re-picking the same people in a round', async () => {
+    it('excludes users already served in current round and accumulates new pick into roundServed', async () => {
         s3Mock.on(ListObjectsV2Command, { Bucket: BUCKET, Prefix: chatPrefix }).resolves({
             Contents: [
                 { Key: `${chatPrefix}@alice` },
@@ -216,7 +216,7 @@ describe('Service.duty — happy path with existing properties.json', () => {
             ],
         });
         s3Mock.on(GetObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).resolves({
-            Body: jsonBody({ dutyCount: 2, lastDuty: ['@alice'] }),
+            Body: jsonBody({ dutyCount: 2, roundServed: ['@alice'] }),
         });
         const writes: Properties[] = [];
         s3Mock.on(PutObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).callsFake((input) => {
@@ -228,34 +228,45 @@ describe('Service.duty — happy path with existing properties.json', () => {
         const duty = await service.duty(chat);
 
         expect(duty).toHaveLength(2);
-        expect(duty).not.toContain('@alice'); // alice was in lastDuty, must be excluded
+        expect(duty).not.toContain('@alice'); // alice already in roundServed, must be excluded
         expect(writes[0]?.dutyCount).toBe(2);
+        // roundServed accumulates: prior + new pick
+        expect([...(writes[0]?.roundServed ?? [])].sort())
+            .toEqual(['@alice', '@bob', '@carol']);
     });
 });
 
-describe('Service.duty — round complete (lastDuty equals dutyUsers)', () => {
-    it('returns lastDuty as-is and does NOT write properties.json', async () => {
+describe('Service.duty — back-compat with legacy `lastDuty` field', () => {
+    it('reads pre-fix properties.json (lastDuty field) as if it were roundServed', async () => {
         s3Mock.on(ListObjectsV2Command, { Bucket: BUCKET, Prefix: chatPrefix }).resolves({
             Contents: [
                 { Key: `${chatPrefix}@alice` },
                 { Key: `${chatPrefix}@bob` },
+                { Key: `${chatPrefix}@carol` },
             ],
         });
         s3Mock.on(GetObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).resolves({
-            Body: jsonBody({ dutyCount: 2, lastDuty: ['@bob', '@alice'] }),
+            Body: jsonBody({ dutyCount: 1, lastDuty: ['@alice'] }), // legacy schema
+        });
+        const writes: Properties[] = [];
+        s3Mock.on(PutObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).callsFake((input) => {
+            writes.push(JSON.parse(input.Body as string));
+            return {};
         });
 
         const service = makeService();
         const duty = await service.duty(chat);
 
-        expect(new Set(duty)).toEqual(new Set(['@alice', '@bob']));
-        // No PutObject for properties.json — round is complete, lastDuty stays as is.
-        expect(s3Mock.commandCalls(PutObjectCommand, { Key: propertiesKey })).toHaveLength(0);
+        // legacy lastDuty=[@alice] is honored as roundServed → @alice is excluded
+        expect(duty).not.toContain('@alice');
+        // and the next write uses the new field name
+        expect(writes[0]?.roundServed).toBeDefined();
+        expect(writes[0]).not.toHaveProperty('lastDuty');
     });
 });
 
-describe('Service.duty — dutyCount > available users', () => {
-    it('truncates to the number of available (non-lastDuty) users without throwing', async () => {
+describe('Service.duty — round exhausted: resets and picks again from full list', () => {
+    it('when every user has served, resets roundServed and picks fresh', async () => {
         s3Mock.on(ListObjectsV2Command, { Bucket: BUCKET, Prefix: chatPrefix }).resolves({
             Contents: [
                 { Key: `${chatPrefix}@alice` },
@@ -263,7 +274,35 @@ describe('Service.duty — dutyCount > available users', () => {
             ],
         });
         s3Mock.on(GetObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).resolves({
-            Body: jsonBody({ dutyCount: 10, lastDuty: ['@alice'] }),
+            Body: jsonBody({ dutyCount: 2, roundServed: ['@bob', '@alice'] }), // round exhausted
+        });
+        const writes: Properties[] = [];
+        s3Mock.on(PutObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).callsFake((input) => {
+            writes.push(JSON.parse(input.Body as string));
+            return {};
+        });
+
+        const service = makeService();
+        const duty = await service.duty(chat);
+
+        // After reset, eligible == users → pick all 2.
+        expect([...duty].sort()).toEqual(['@alice', '@bob']);
+        // Properties IS written (round restarts with the new pick).
+        expect(writes).toHaveLength(1);
+        expect([...(writes[0]?.roundServed ?? [])].sort()).toEqual(['@alice', '@bob']);
+    });
+});
+
+describe('Service.duty — dutyCount > available users in current round', () => {
+    it('truncates pick to the eligible subset', async () => {
+        s3Mock.on(ListObjectsV2Command, { Bucket: BUCKET, Prefix: chatPrefix }).resolves({
+            Contents: [
+                { Key: `${chatPrefix}@alice` },
+                { Key: `${chatPrefix}@bob` },
+            ],
+        });
+        s3Mock.on(GetObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).resolves({
+            Body: jsonBody({ dutyCount: 10, roundServed: ['@alice'] }),
         });
         s3Mock.on(PutObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).resolves({});
 
@@ -275,12 +314,12 @@ describe('Service.duty — dutyCount > available users', () => {
 });
 
 describe('Service.duty — empty user list', () => {
-    it('returns [] and writes empty lastDuty', async () => {
+    it('returns [] and writes empty roundServed (round resets to clean state)', async () => {
         s3Mock.on(ListObjectsV2Command, { Bucket: BUCKET, Prefix: chatPrefix }).resolves({
             Contents: [{ Key: `${chatPrefix}properties.json` }],
         });
         s3Mock.on(GetObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).resolves({
-            Body: jsonBody({ dutyCount: 1, lastDuty: ['@stale'] }),
+            Body: jsonBody({ dutyCount: 1, roundServed: ['@stale'] }),
         });
         const writes: Properties[] = [];
         s3Mock.on(PutObjectCommand, { Bucket: BUCKET, Key: propertiesKey }).callsFake((input) => {
@@ -292,7 +331,7 @@ describe('Service.duty — empty user list', () => {
         const duty = await service.duty(chat);
 
         expect(duty).toEqual([]);
-        expect(writes[0]?.lastDuty).toEqual([]);
+        expect(writes[0]?.roundServed).toEqual([]);
     });
 });
 
@@ -480,7 +519,7 @@ describe('Service.reset', () => {
         const msg = await service.reset(chat);
 
         expect(msg).toContain('создано');
-        expect(initBody).toEqual({ dutyCount: 1, lastDuty: [] });
+        expect(initBody).toEqual({ dutyCount: 1, roundServed: [] });
     });
 });
 
