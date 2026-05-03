@@ -1,9 +1,9 @@
-import type { DomainChat, Properties } from '../types';
+import type { DomainChat, Member, Properties } from '../types';
 import type { ChatState, Storage } from './types';
 
 interface ChatRow {
     props?: Properties;
-    members: Set<string>;
+    members: Map<string, Member>;
 }
 
 interface TriggerRow {
@@ -11,14 +11,18 @@ interface TriggerRow {
     hour: number;
 }
 
-const DEFAULT_PROPS: Properties = { dutyCount: 1, roundServed: [] };
+const DEFAULT_PROPS: Properties = { dutyCount: 1 };
 
 function chatPk(chat: DomainChat): string {
     return `${chat.type}#${chat.id}`;
 }
 
 function cloneProps(p: Properties): Properties {
-    return { dutyCount: p.dutyCount, roundServed: [...p.roundServed] };
+    return { dutyCount: p.dutyCount };
+}
+
+function cloneMember(m: Member): Member {
+    return { username: m.username, servedCount: m.servedCount };
 }
 
 export class InMemoryStorage implements Storage {
@@ -29,7 +33,7 @@ export class InMemoryStorage implements Storage {
         const pk = chatPk(chat);
         let row = this.chats.get(pk);
         if (!row) {
-            row = { members: new Set() };
+            row = { members: new Map() };
             this.chats.set(pk, row);
         }
         return row;
@@ -39,12 +43,21 @@ export class InMemoryStorage implements Storage {
         const row = this.chats.get(chatPk(chat));
         return {
             props: row?.props ? cloneProps(row.props) : cloneProps(DEFAULT_PROPS),
-            members: row ? [...row.members] : [],
+            members: row ? [...row.members.values()].map(cloneMember) : [],
         };
     }
 
-    async setChatState(chat: DomainChat, props: Properties): Promise<void> {
+    async setProperties(chat: DomainChat, props: Properties): Promise<void> {
         this._ensure(chat).props = cloneProps(props);
+    }
+
+    async incrementServeCounts(chat: DomainChat, usernames: string[]): Promise<void> {
+        const row = this.chats.get(chatPk(chat));
+        if (!row) return;
+        for (const u of usernames) {
+            const m = row.members.get(u);
+            if (m) m.servedCount += 1;
+        }
     }
 
     async propsExists(chat: DomainChat): Promise<boolean> {
@@ -56,7 +69,10 @@ export class InMemoryStorage implements Storage {
     }
 
     async addMember(chat: DomainChat, username: string): Promise<void> {
-        this._ensure(chat).members.add(username);
+        const row = this._ensure(chat);
+        if (!row.members.has(username)) {
+            row.members.set(username, { username, servedCount: 0 });
+        }
     }
 
     async removeMember(chat: DomainChat, username: string): Promise<void> {

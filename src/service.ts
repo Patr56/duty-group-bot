@@ -1,17 +1,19 @@
 import { ServiceError } from './errors';
 import type { Storage } from './storage/types';
+import type { ChatState } from './storage/types';
 import type { DomainChat, Properties } from './types';
 
-const INIT_PROPERTIES: Properties = { dutyCount: 1, roundServed: [] };
+const DEFAULT_PROPS: Properties = { dutyCount: 1 };
 const INIT_TRIGGER_HOUR = 9;
 
 /**
- * Storage stores BARE usernames. Service prefixes `@` only when speaking to
- * the Controller. `Properties.roundServed` therefore also contains bare names.
+ * Storage stores BARE usernames + per-member `servedCount`. Service prefixes
+ * `@` only when speaking to the Controller.
  *
- * `/duty` is a non-atomic read-modify-write: between getChatState() and
- * setChatState() another concurrent /duty in the same chat could clobber the
- * round. Accepted risk — traffic is one-cron-per-day plus rare manual calls.
+ * `/duty` is a non-atomic read-modify-write: between `getChatState()` and
+ * `incrementServeCounts()` another concurrent `/duty` in the same chat could
+ * pick the same set. Accepted risk — traffic is one-cron-per-day plus rare
+ * manual calls.
  */
 export class Service {
     constructor(private readonly storage: Storage) {}
@@ -28,7 +30,7 @@ export class Service {
             return `Хранилище для "${name}" уже создано.`;
         }
         try {
-            await this.storage.setChatState(chat, { ...INIT_PROPERTIES, roundServed: [] });
+            await this.storage.setProperties(chat, { ...DEFAULT_PROPS });
         } catch (e) {
             throw new ServiceError(`Ошибка при создании хранилища для "${name}".`, e);
         }
@@ -79,12 +81,8 @@ export class Service {
     }
 
     async setDutyCount(chat: DomainChat, dutyCount: number): Promise<number> {
-        const state = await this._getChatState(chat);
         try {
-            await this.storage.setChatState(chat, {
-                dutyCount,
-                roundServed: state.props.roundServed,
-            });
+            await this.storage.setProperties(chat, { dutyCount });
         } catch (e) {
             throw new ServiceError(`Ошибка при обновлении настроек хранилища для ${chat.id}.`, e);
         }
@@ -117,42 +115,48 @@ export class Service {
         return `@${username} удалён из дежурных.\nКоличество дежурных: ${count}`;
     }
 
+    /**
+     * Picks `dutyCount` members with the lowest `servedCount`. Ties broken by
+     * username (alphabetic). Increments their counters before returning.
+     *
+     * Newly registered members start at `servedCount = 0` and naturally go
+     * to the front of the queue. Removed members vanish without leaving stale
+     * state. No "round" bookkeeping needed.
+     */
     async duty(chat: DomainChat): Promise<string[]> {
         const state = await this._getChatState(chat);
         const members = state.members;
+        if (members.length === 0) return [];
 
-        let roundServed = state.props.roundServed;
-        let eligible = members.filter((u) => !roundServed.includes(u));
-        if (eligible.length === 0) {
-            roundServed = [];
-            eligible = members;
-        }
-
-        const newDuty = eligible
-            .slice()
-            .sort(() => Math.random() - 0.5)
-            .slice(0, state.props.dutyCount);
+        const sorted = [...members].sort(
+            (a, b) => a.servedCount - b.servedCount || a.username.localeCompare(b.username),
+        );
+        const k = Math.min(state.props.dutyCount, members.length);
+        const pick = sorted.slice(0, k).map((m) => m.username);
 
         try {
-            await this.storage.setChatState(chat, {
-                dutyCount: state.props.dutyCount,
-                roundServed: [...roundServed, ...newDuty],
-            });
+            await this.storage.incrementServeCounts(chat, pick);
         } catch (e) {
-            throw new ServiceError(`Ошибка при обновлении настроек хранилища для ${chat.id}.`, e);
+            throw new ServiceError(`Ошибка при обновлении счётчиков дежурных для ${chat.id}.`, e);
         }
-        return newDuty.map((u) => `@${u}`);
+        return pick.map((u) => `@${u}`);
     }
 
+    /**
+     * Returns members in `@username (count)` format, sorted alphabetically.
+     * Counts make perekos visible at a glance.
+     */
     async list(chat: DomainChat): Promise<string[]> {
-        const state = await this._getChatState(chat, `Ошибка при запросе списка дежурных для ${this._readableName(chat)}.`);
-        return state.members.map((u) => `@${u}`);
+        const state = await this._getChatState(
+            chat,
+            `Ошибка при запросе списка дежурных для ${this._readableName(chat)}.`,
+        );
+        return [...state.members]
+            .sort((a, b) => a.username.localeCompare(b.username))
+            .map((m) => `@${m.username} (${m.servedCount})`);
     }
 
-    private async _getChatState(chat: DomainChat, errMsg?: string): Promise<{
-        props: Properties;
-        members: string[];
-    }> {
+    private async _getChatState(chat: DomainChat, errMsg?: string): Promise<ChatState> {
         try {
             return await this.storage.getChatState(chat);
         } catch (e) {

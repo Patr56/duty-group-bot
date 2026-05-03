@@ -4,7 +4,7 @@ import { Service } from '../src/service';
 import { ServiceError } from '../src/errors';
 import { InMemoryStorage } from '../src/storage/memory';
 import type { Storage } from '../src/storage/types';
-import type { DomainChat, Properties } from '../src/types';
+import type { DomainChat } from '../src/types';
 
 const chat: DomainChat = { id: -100123, type: 'group', title: 'TestChat' };
 
@@ -17,7 +17,7 @@ beforeEach(() => {
 });
 
 describe('Service.reg — chat WITHOUT properties (self-heal)', () => {
-    it('creates user and reports count derived from member list, not from missing properties', async () => {
+    it('creates user and reports count derived from member list', async () => {
         const result = await service.reg(chat, 'alice');
 
         expect(result).toContain('@alice');
@@ -62,24 +62,24 @@ describe('Service.unreg — chat WITHOUT properties (self-heal)', () => {
 });
 
 describe('Service.duty — chat WITHOUT properties (self-heal + dutyCount=1 default)', () => {
-    it('does not throw, picks 1 person, and persists props with default dutyCount', async () => {
-        await service.reg(chat, 'alice');
+    it('does not throw, picks 1 person (lowest-count, alpha tiebreak)', async () => {
         await service.reg(chat, 'bob');
+        await service.reg(chat, 'alice');
         await service.reg(chat, 'carol');
 
         const duty = await service.duty(chat);
 
-        expect(duty).toHaveLength(1);
-        expect(['@alice', '@bob', '@carol']).toContain(duty[0]);
-
-        const state = await storage.getChatState(chat);
-        expect(state.props.dutyCount).toBe(1);
-        expect(state.props.roundServed).toEqual(duty.map((u) => u.slice(1)));
+        // Все при счёте 0, alpha tiebreak → @alice.
+        expect(duty).toEqual(['@alice']);
+        const counts = Object.fromEntries(
+            (await storage.getChatState(chat)).members.map((m) => [m.username, m.servedCount]),
+        );
+        expect(counts).toEqual({ alice: 1, bob: 0, carol: 0 });
     });
 });
 
-describe('Service.setDutyCount — chat WITHOUT properties (self-heal)', () => {
-    it('persists props with the new dutyCount and does not throw', async () => {
+describe('Service.setDutyCount', () => {
+    it('persists props and does not throw on chat without properties', async () => {
         const result = await service.setDutyCount(chat, 3);
 
         expect(result).toBe(3);
@@ -87,16 +87,16 @@ describe('Service.setDutyCount — chat WITHOUT properties (self-heal)', () => {
         expect(state.props.dutyCount).toBe(3);
     });
 
-    it('preserves existing roundServed when changing dutyCount', async () => {
+    it('does not reset existing servedCount when changing dutyCount', async () => {
         await service.reg(chat, 'alice');
-        await service.reg(chat, 'bob');
-        await service.duty(chat); // populates roundServed
-        const beforeRound = (await storage.getChatState(chat)).props.roundServed;
+        await service.duty(chat); // alice: 1
 
         await service.setDutyCount(chat, 5);
 
-        const afterRound = (await storage.getChatState(chat)).props.roundServed;
-        expect(afterRound).toEqual(beforeRound);
+        const counts = Object.fromEntries(
+            (await storage.getChatState(chat)).members.map((m) => [m.username, m.servedCount]),
+        );
+        expect(counts).toEqual({ alice: 1 });
     });
 });
 
@@ -106,12 +106,11 @@ describe('Service.init — defaults', () => {
 
         const state = await storage.getChatState(chat);
         expect(state.props.dutyCount).toBe(1);
-        expect(state.props.roundServed).toEqual([]);
     });
 
     it('returns "уже создано" when properties already exist and does NOT overwrite', async () => {
         await service.init(chat);
-        await service.setDutyCount(chat, 7); // mutate to detect overwrite
+        await service.setDutyCount(chat, 7);
 
         const result = await service.init(chat);
 
@@ -121,72 +120,87 @@ describe('Service.init — defaults', () => {
     });
 });
 
-describe('Service.duty — storage error propagation', () => {
+describe('Service.duty — error propagation', () => {
     it('wraps non-ServiceError storage failures from getChatState in ServiceError', async () => {
-        const failing: Pick<Storage, 'getChatState'> = {
+        const failing: Storage = {
+            ...new InMemoryStorage(),
             async getChatState() {
                 throw new Error('AccessDenied');
             },
         };
-        const svc = new Service({ ...new InMemoryStorage(), ...failing } as Storage);
+        const svc = new Service(failing);
 
         await expect(svc.duty(chat)).rejects.toThrow(ServiceError);
     });
 });
 
-describe('Service.duty — happy path with existing properties', () => {
-    it('excludes users already served in current round and accumulates new pick into roundServed', async () => {
+describe('Service.duty — pick by lowest servedCount, alpha tiebreak', () => {
+    it('picks the member with the lowest servedCount; among ties, alpha first', async () => {
         await service.reg(chat, 'alice');
         await service.reg(chat, 'bob');
         await service.reg(chat, 'carol');
-        await storage.setChatState(chat, { dutyCount: 2, roundServed: ['alice'] });
+        await storage.setProperties(chat, { dutyCount: 1 });
+        // bump alice and bob; carol stays at 0.
+        await storage.incrementServeCounts(chat, ['alice', 'bob']);
 
         const duty = await service.duty(chat);
 
-        expect(duty).toHaveLength(2);
-        expect(duty).not.toContain('@alice');
-
-        const state = await storage.getChatState(chat);
-        expect(state.props.dutyCount).toBe(2);
-        expect([...state.props.roundServed].sort()).toEqual(['alice', 'bob', 'carol']);
+        expect(duty).toEqual(['@carol']);
+        const counts = Object.fromEntries(
+            (await storage.getChatState(chat)).members.map((m) => [m.username, m.servedCount]),
+        );
+        expect(counts).toEqual({ alice: 1, bob: 1, carol: 1 });
     });
-});
 
-describe('Service.duty — round exhausted: resets and picks again from full list', () => {
-    it('when every user has served, resets roundServed and picks fresh', async () => {
+    it('with dutyCount=2 and three at count=0, picks alpha pair and increments only those', async () => {
         await service.reg(chat, 'alice');
         await service.reg(chat, 'bob');
-        await storage.setChatState(chat, { dutyCount: 2, roundServed: ['bob', 'alice'] });
+        await service.reg(chat, 'carol');
+        await storage.setProperties(chat, { dutyCount: 2 });
 
         const duty = await service.duty(chat);
 
         expect([...duty].sort()).toEqual(['@alice', '@bob']);
-        const state = await storage.getChatState(chat);
-        expect([...state.props.roundServed].sort()).toEqual(['alice', 'bob']);
+        const counts = Object.fromEntries(
+            (await storage.getChatState(chat)).members.map((m) => [m.username, m.servedCount]),
+        );
+        expect(counts).toEqual({ alice: 1, bob: 1, carol: 0 });
+    });
+
+    it('a freshly /reg-d member has servedCount=0 and goes to the front of the queue', async () => {
+        await service.reg(chat, 'alice');
+        await service.reg(chat, 'bob');
+        await storage.setProperties(chat, { dutyCount: 1 });
+        // alice and bob have served 5 times each.
+        for (let i = 0; i < 5; i++) await storage.incrementServeCounts(chat, ['alice', 'bob']);
+
+        await service.reg(chat, 'carol'); // newcomer
+
+        const duty = await service.duty(chat);
+        expect(duty).toEqual(['@carol']);
     });
 });
 
-describe('Service.duty — dutyCount > available users in current round', () => {
-    it('truncates pick to the eligible subset', async () => {
+describe('Service.duty — dutyCount > available users', () => {
+    it('truncates pick to the entire member set', async () => {
         await service.reg(chat, 'alice');
         await service.reg(chat, 'bob');
-        await storage.setChatState(chat, { dutyCount: 10, roundServed: ['alice'] });
+        await storage.setProperties(chat, { dutyCount: 10 });
 
         const duty = await service.duty(chat);
 
-        expect(duty).toEqual(['@bob']);
+        expect([...duty].sort()).toEqual(['@alice', '@bob']);
     });
 });
 
 describe('Service.duty — empty user list', () => {
-    it('returns [] and writes empty roundServed (round resets to clean state)', async () => {
-        await storage.setChatState(chat, { dutyCount: 1, roundServed: ['stale'] });
+    it('returns [] without writing anything', async () => {
+        await storage.setProperties(chat, { dutyCount: 2 });
 
         const duty = await service.duty(chat);
 
         expect(duty).toEqual([]);
-        const state = await storage.getChatState(chat);
-        expect(state.props.roundServed).toEqual([]);
+        expect((await storage.getChatState(chat)).members).toEqual([]);
     });
 });
 
@@ -212,12 +226,12 @@ describe('Service.getChats — returns triggers via storage', () => {
     });
 
     it('wraps storage errors in ServiceError', async () => {
-        const failing = {
+        const failing: Storage = {
             ...new InMemoryStorage(),
-            async listTriggers(): Promise<DomainChat[]> {
+            async listTriggers() {
                 throw new Error('boom');
             },
-        } as Storage;
+        };
         const svc = new Service(failing);
 
         await expect(svc.getChats()).rejects.toThrow(/тригеров/);
@@ -234,12 +248,12 @@ describe('Service.triggerOn / triggerOff', () => {
     });
 
     it('triggerOn wraps storage errors in ServiceError', async () => {
-        const failing = {
+        const failing: Storage = {
             ...new InMemoryStorage(),
-            async setTrigger(): Promise<void> {
+            async setTrigger() {
                 throw new Error('boom');
             },
-        } as Storage;
+        };
         const svc = new Service(failing);
 
         await expect(svc.triggerOn(chat)).rejects.toThrow(/триггера/);
@@ -254,12 +268,12 @@ describe('Service.triggerOn / triggerOff', () => {
     });
 
     it('triggerOff wraps storage errors in ServiceError', async () => {
-        const failing = {
+        const failing: Storage = {
             ...new InMemoryStorage(),
-            async removeTrigger(): Promise<void> {
+            async removeTrigger() {
                 throw new Error('boom');
             },
-        } as Storage;
+        };
         const svc = new Service(failing);
 
         await expect(svc.triggerOff(chat)).rejects.toThrow(/удалении триггера/);
@@ -267,28 +281,28 @@ describe('Service.triggerOn / triggerOff', () => {
 });
 
 describe('Service.init — error path', () => {
-    it('wraps setChatState failure in ServiceError', async () => {
-        const failing = {
+    it('wraps setProperties failure in ServiceError', async () => {
+        const failing: Storage = {
             ...new InMemoryStorage(),
-            async propsExists(): Promise<boolean> {
+            async propsExists() {
                 return false;
             },
-            async setChatState(): Promise<void> {
+            async setProperties() {
                 throw new Error('boom');
             },
-        } as Storage;
+        };
         const svc = new Service(failing);
 
         await expect(svc.init(chat)).rejects.toThrow(/создании хранилища/);
     });
 
     it('wraps propsExists failure in ServiceError', async () => {
-        const failing = {
+        const failing: Storage = {
             ...new InMemoryStorage(),
-            async propsExists(): Promise<boolean> {
+            async propsExists() {
                 throw new Error('denied');
             },
-        } as Storage;
+        };
         const svc = new Service(failing);
 
         await expect(svc.init(chat)).rejects.toThrow(/проверке хранилища/);
@@ -296,9 +310,10 @@ describe('Service.init — error path', () => {
 });
 
 describe('Service.clear', () => {
-    it('removes members + props and the trigger', async () => {
+    it('removes members + props (counters disappear) and the trigger', async () => {
         await service.reg(chat, 'alice');
         await service.reg(chat, 'bob');
+        await storage.incrementServeCounts(chat, ['alice', 'bob', 'alice']);
         await service.triggerOn(chat);
 
         await service.clear(chat);
@@ -311,27 +326,27 @@ describe('Service.clear', () => {
 
     it('tolerates triggerOff failure', async () => {
         await service.reg(chat, 'alice');
-        const failing = {
+        const failing: Storage = {
             ...storage,
-            async clearChat(c: DomainChat) {
+            clearChat(c) {
                 return storage.clearChat(c);
             },
             async removeTrigger() {
                 throw new Error('trigger-off failed');
             },
-        } as unknown as Storage;
+        };
         const svc = new Service(failing);
 
         await expect(svc.clear(chat)).resolves.toBeUndefined();
     });
 
     it('wraps clearChat failure in ServiceError', async () => {
-        const failing = {
+        const failing: Storage = {
             ...new InMemoryStorage(),
-            async clearChat(): Promise<void> {
+            async clearChat() {
                 throw new Error('boom');
             },
-        } as Storage;
+        };
         const svc = new Service(failing);
 
         await expect(svc.clear(chat)).rejects.toThrow(/очистке хранилища/);
@@ -339,8 +354,9 @@ describe('Service.clear', () => {
 });
 
 describe('Service.reset', () => {
-    it('clears the chat and re-initialises properties', async () => {
+    it('clears the chat (incl. counters) and re-initialises properties', async () => {
         await service.reg(chat, 'alice');
+        await storage.incrementServeCounts(chat, ['alice']);
         await service.setDutyCount(chat, 3);
 
         const msg = await service.reset(chat);
@@ -348,27 +364,28 @@ describe('Service.reset', () => {
         expect(msg).toContain('создано');
         const state = await storage.getChatState(chat);
         expect(state.members).toEqual([]);
-        expect(state.props).toEqual<Properties>({ dutyCount: 1, roundServed: [] });
+        expect(state.props.dutyCount).toBe(1);
     });
 });
 
 describe('Service.list', () => {
-    it('returns @-prefixed usernames from storage', async () => {
+    it('returns @-prefixed names with served counts', async () => {
         await service.reg(chat, 'alice');
         await service.reg(chat, 'bob');
+        await storage.incrementServeCounts(chat, ['alice', 'alice', 'bob']);
 
         const users = await service.list(chat);
 
-        expect([...users].sort()).toEqual(['@alice', '@bob']);
+        expect([...users].sort()).toEqual(['@alice (2)', '@bob (1)']);
     });
 
     it('wraps storage failure in ServiceError', async () => {
-        const failing = {
+        const failing: Storage = {
             ...new InMemoryStorage(),
-            async getChatState(): Promise<never> {
+            async getChatState() {
                 throw new Error('boom');
             },
-        } as Storage;
+        };
         const svc = new Service(failing);
 
         await expect(svc.list(chat)).rejects.toThrow(/списка дежурных/);
