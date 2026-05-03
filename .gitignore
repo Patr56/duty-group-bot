@@ -2,3 +2,6 @@
 # https://stackoverflow.com/questions/7335420/global-git-ignore#22885996
 
 node_modules
+dist
+coverage
+*.tsbuildinfo
