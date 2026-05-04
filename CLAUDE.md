@@ -15,8 +15,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 GitHub Actions (`.github/workflows/`):
 - `ci.yml` — на `pull_request` в `master`: `npm ci`, `npm run check`, `npm run lint`, `npm test`, `npm run build`.
-- `deploy.yml` — `workflow_dispatch` с input-ом `ref` (ветка/тег/SHA). Делает `npm ci` (с devDeps — нужен esbuild), `npm run build`, затем `yc-actions/yc-sls-function@v3` упаковывает только `dist/**` + `package.json` и создаёт новую версию функции `duty-group-bot` в фолдере `b1givfkfh806tp641l6l`. Тэг `$latest` автоматически переезжает на свежую версию, существующий cron-триггер сразу подхватывает новый код.
-- Action закреплён на `@v3` сознательно; миграцию на `@v4` делать отдельным PR.
+- `deploy.yml` — `workflow_dispatch` с input-ом `ref` (ветка/тег/SHA). Делает `npm ci` (с devDeps — нужен esbuild), `npm run build`, затем `yc-actions/yc-sls-function@v4` упаковывает только `dist/**` + `package.json` и создаёт новую версию функции `duty-group-bot` в фолдере `b1givfkfh806tp641l6l`. Тэг `$latest` автоматически переезжает на свежую версию, существующий cron-триггер сразу подхватывает новый код.
+- Action на `@v4` (yc-sls-function v4 = миграция на yc-sdk 3.x; inputs полностью совместимы с v3). Сам action ещё запускается на `node20` — warning про Node 20 deprecation от GitHub неустраним до релиза upstream с `node24`.
 
 Секреты, которые должны быть в репозитории GitHub:
 - `YC_SA_JSON_CREDENTIALS` — JSON-ключ сервисного аккаунта-деплойера (роли `functions.editor` на фолдер + `iam.serviceAccounts.user` на runtime-SA `ajerdikcv0fdb1s370uf`).
