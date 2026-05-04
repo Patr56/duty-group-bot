@@ -8,10 +8,10 @@
  * Properties verified here:
  *   - perfect long-run fairness — every K days each member has served K·k/N
  *     times (when divisible) or differs by at most 1 (otherwise);
- *   - new /reg-d members go to the front of the queue (count = 0);
+ *   - new /reg-d members start at min(existing) so they don't monopolise duty
+ *     while catching up; max-min spread stays ≤ 1 even across /reg mid-run;
  *   - /unreg leaves no stale state — the gone member just disappears;
- *   - max-spread is bounded — at any instant `max(count) - min(count) <= 1` if
- *     no members were added/removed mid-run.
+ *   - max-spread is bounded — at any instant `max(count) - min(count) <= 1`.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 
@@ -130,29 +130,64 @@ describe('rotation: invariant — max-min spread is bounded by 1', () => {
     });
 });
 
-describe('rotation: /reg mid-run — newcomer joins the front of the queue', () => {
-    it('after several rounds, a fresh member with count=0 is picked next', async () => {
-        await seed(['alice', 'bob'], 1);
-        for (let day = 0; day < 10; day++) await service.duty(chat); // alice/bob each at 5
-
-        await service.reg(chat, 'carol');
-        const day1 = await service.duty(chat);
-
-        expect(day1).toEqual(['@carol']);
-    });
-
-    it('carol catches up: after enough days her count is no longer the lowest', async () => {
+describe('rotation: /reg mid-run — newcomer inherits min(existing) count', () => {
+    it('newcomer joins at the same count as the least-served existing member', async () => {
         await seed(['alice', 'bob'], 1);
         for (let day = 0; day < 10; day++) await service.duty(chat); // alice=5, bob=5
 
         await service.reg(chat, 'carol');
-        // Pick until carol has caught up.
-        for (let day = 0; day < 5; day++) await service.duty(chat);
 
         const c = await counts();
-        // carol picked all 5 days (was 5 behind), now everyone at 5.
-        expect(c.carol).toBe(5);
-        expect(Math.max(...Object.values(c)) - Math.min(...Object.values(c))).toBeLessThanOrEqual(1);
+        expect(c).toEqual({ alice: 5, bob: 5, carol: 5 });
+    });
+
+    it('newcomer does NOT serve N days in a row to catch up', async () => {
+        // The bug we fixed: with init=0, carol would serve 5 days straight
+        // after joining alice/bob at count=5. With init=min, she just rotates.
+        await seed(['alice', 'bob'], 1);
+        for (let day = 0; day < 10; day++) await service.duty(chat);
+
+        await service.reg(chat, 'carol');
+        const picks: string[] = [];
+        for (let day = 0; day < 6; day++) {
+            const duty = await service.duty(chat);
+            picks.push(duty[0] ?? '');
+        }
+
+        // Each member should appear exactly twice over the next 6 days
+        // (full two cycles of the 3-person rotation). Crucially, carol does
+        // NOT take 5 picks in a row.
+        const tally = picks.reduce<Record<string, number>>((acc, u) => {
+            acc[u] = (acc[u] ?? 0) + 1;
+            return acc;
+        }, {});
+        expect(tally).toEqual({ '@alice': 2, '@bob': 2, '@carol': 2 });
+    });
+
+    it('max-min spread stays ≤ 1 even when /reg happens mid-run', async () => {
+        await seed(['alice', 'bob'], 1);
+        for (let day = 0; day < 10; day++) await service.duty(chat);
+
+        await service.reg(chat, 'carol');
+        let spread = (() => {
+            const v = Object.values({ alice: 5, bob: 5, carol: 5 });
+            return Math.max(...v) - Math.min(...v);
+        })();
+        expect(spread).toBeLessThanOrEqual(1);
+
+        for (let day = 0; day < 20; day++) {
+            await service.duty(chat);
+            const v = Object.values(await counts());
+            spread = Math.max(...v) - Math.min(...v);
+            expect(spread).toBeLessThanOrEqual(1);
+        }
+    });
+
+    it('first /reg into an empty chat starts at 0', async () => {
+        await storage.setProperties(chat, { dutyCount: 1 });
+        await service.reg(chat, 'alice');
+
+        expect(await counts()).toEqual({ alice: 0 });
     });
 });
 

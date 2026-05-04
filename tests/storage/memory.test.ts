@@ -38,12 +38,27 @@ describe('InMemoryStorage — members', () => {
         expect(await s.memberExists(chat, 'alice')).toBe(false);
     });
 
-    it('addMember initialises servedCount = 0', async () => {
+    it('first member starts at servedCount = 0', async () => {
         const s = new InMemoryStorage();
         await s.addMember(chat, 'alice');
 
         const state = await s.getChatState(chat);
         expect(state.members).toEqual([{ username: 'alice', servedCount: 0 }]);
+    });
+
+    it('newcomer joins existing chat with servedCount = min(existing)', async () => {
+        const s = new InMemoryStorage();
+        await s.addMember(chat, 'alice');
+        await s.addMember(chat, 'bob');
+        await s.incrementServeCounts(chat, ['alice']);
+        await s.incrementServeCounts(chat, ['alice']);
+        await s.incrementServeCounts(chat, ['bob']); // alice=2, bob=1
+
+        await s.addMember(chat, 'carol');
+
+        const state = await s.getChatState(chat);
+        const counts = Object.fromEntries(state.members.map((m) => [m.username, m.servedCount]));
+        expect(counts).toEqual({ alice: 2, bob: 1, carol: 1 });
     });
 
     it('addMember is idempotent (does not reset servedCount of existing member)', async () => {

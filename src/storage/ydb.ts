@@ -158,15 +158,17 @@ export class YdbStorage implements Storage {
 
     async addMember(chat: DomainChat, username: string): Promise<void> {
         const pk = chatPk(chat);
-        // INSERT-or-keep: only sets served_count = 0 for genuinely new rows.
-        // Existing rows keep whatever counter they had.
+        // Newcomer inherits the lowest existing served_count (0 if no members
+        // yet) so they don't monopolise duty while catching up.
         await this._do((session) =>
             session.executeQuery(
                 `
                 DECLARE $chat_pk AS Utf8;
                 DECLARE $username AS Utf8;
                 INSERT INTO ${TABLES.chatMembers} (chat_pk, username, served_count)
-                    VALUES ($chat_pk, $username, 0u);
+                SELECT $chat_pk, $username, COALESCE(MIN(served_count), 0u)
+                    FROM ${TABLES.chatMembers}
+                    WHERE chat_pk = $chat_pk;
                 `,
                 {
                     $chat_pk: TypedValues.utf8(pk),

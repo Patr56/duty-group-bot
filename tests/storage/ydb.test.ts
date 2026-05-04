@@ -178,7 +178,7 @@ describe('YdbStorage.memberExists', () => {
 });
 
 describe('YdbStorage.addMember / removeMember', () => {
-    it('addMember INSERTs into chat_members with served_count=0u', async () => {
+    it('addMember INSERTs with served_count = COALESCE(MIN(served_count), 0u) of existing rows', async () => {
         const fake = makeFakeDriver();
         const storage = new YdbStorage(fake.driver);
 
@@ -186,7 +186,9 @@ describe('YdbStorage.addMember / removeMember', () => {
 
         const q = fake.calls[0]?.query ?? '';
         expect(q).toContain(`INSERT INTO ${TABLES.chatMembers}`);
-        expect(q).toContain('0u');
+        expect(q).toContain('COALESCE(MIN(served_count), 0u)');
+        expect(q).toContain(`FROM ${TABLES.chatMembers}`);
+        expect(q).toContain('WHERE chat_pk = $chat_pk');
     });
 
     it('addMember swallows duplicate-key conflicts (idempotent re-add)', async () => {
