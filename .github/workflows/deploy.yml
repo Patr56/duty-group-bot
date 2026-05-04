@@ -31,7 +31,7 @@ jobs:
         run: npm run build
 
       - name: Deploy function version
-        uses: yc-actions/yc-sls-function@v3
+        uses: yc-actions/yc-sls-function@v4
         with:
           yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
           folder-id: b1givfkfh806tp641l6l
