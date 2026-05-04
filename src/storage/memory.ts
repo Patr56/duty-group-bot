@@ -70,9 +70,12 @@ export class InMemoryStorage implements Storage {
 
     async addMember(chat: DomainChat, username: string): Promise<void> {
         const row = this._ensure(chat);
-        if (!row.members.has(username)) {
-            row.members.set(username, { username, servedCount: 0 });
-        }
+        if (row.members.has(username)) return;
+        const existing = [...row.members.values()];
+        const servedCount = existing.length === 0
+            ? 0
+            : Math.min(...existing.map((m) => m.servedCount));
+        row.members.set(username, { username, servedCount });
     }
 
     async removeMember(chat: DomainChat, username: string): Promise<void> {

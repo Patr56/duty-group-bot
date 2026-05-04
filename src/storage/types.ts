@@ -28,6 +28,15 @@ export interface Storage {
     propsExists(chat: DomainChat): Promise<boolean>;
 
     memberExists(chat: DomainChat, username: string): Promise<boolean>;
+    /**
+     * Inserts a new member with `servedCount = min(existing members' counts)`,
+     * or `0` if the chat has no members yet. Re-adding an existing member is a
+     * no-op (counter is preserved).
+     *
+     * Why min and not 0: a newcomer joining a chat where existing members have
+     * served many times would otherwise stay at the front of the queue for as
+     * many days as the gap, dominating duty until they catch up.
+     */
     addMember(chat: DomainChat, username: string): Promise<void>;
     removeMember(chat: DomainChat, username: string): Promise<void>;
 

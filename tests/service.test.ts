@@ -167,17 +167,25 @@ describe('Service.duty — pick by lowest servedCount, alpha tiebreak', () => {
         expect(counts).toEqual({ alice: 1, bob: 1, carol: 0 });
     });
 
-    it('a freshly /reg-d member has servedCount=0 and goes to the front of the queue', async () => {
+    it('a freshly /reg-d member inherits min(existing servedCount), not 0', async () => {
+        // Otherwise a newcomer joining old hands would dominate duty for many
+        // days while their counter caught up.
         await service.reg(chat, 'alice');
         await service.reg(chat, 'bob');
         await storage.setProperties(chat, { dutyCount: 1 });
-        // alice and bob have served 5 times each.
         for (let i = 0; i < 5; i++) await storage.incrementServeCounts(chat, ['alice', 'bob']);
 
         await service.reg(chat, 'carol'); // newcomer
 
+        const counts = Object.fromEntries(
+            (await storage.getChatState(chat)).members.map((m) => [m.username, m.servedCount]),
+        );
+        expect(counts).toEqual({ alice: 5, bob: 5, carol: 5 });
+
+        // First duty after /reg goes to alice by alpha tiebreak (all tied at 5),
+        // not to carol — she just rotates fairly from now on.
         const duty = await service.duty(chat);
-        expect(duty).toEqual(['@carol']);
+        expect(duty).toEqual(['@alice']);
     });
 });
 
